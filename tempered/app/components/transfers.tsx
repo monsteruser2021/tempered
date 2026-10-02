@@ -30,6 +30,8 @@ type Distribution = { id: string; month: number; year: number };
 type Transaction = { category: string; income: number; expense: number };
 type Income = { total: number; percentages: Record<string, number> };
 type ExchangeTransaction = { category: string; incomeBs: number; expenseBs: number };
+type ExchangeRow = { id: string; date: string; description: string; transferId: string; isCurrencyExchange: boolean; exchangeRate: number; spentBs: number; purchasedUsd: number };
+type ExchangeAudit = Omit<ExchangeRow, "transferId" | "isCurrencyExchange">;
 
 export default function Transfers() {
   const { userId: currentUserId } = useSession();
@@ -41,6 +43,8 @@ export default function Transfers() {
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [exchangeTransactions, setExchangeTransactions] = useState<ExchangeTransaction[]>([]);
   const [exchangeIncomes, setExchangeIncomes] = useState<Income[]>([]);
+  const [exchangeAudit, setExchangeAudit] = useState<ExchangeAudit[]>([]);
+  const [exchangeAuditPeriod, setExchangeAuditPeriod] = useState("");
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
@@ -94,6 +98,67 @@ export default function Transfers() {
     return () => { stopTransactions(); stopIncomes(); };
   }, [distributionId]);
 
+  useEffect(() => {
+    if (!distributionId) return;
+    let bolivarRows: ExchangeRow[] = [];
+    let dollarRows: ExchangeRow[] = [];
+    const rebuildAudit = () => {
+      const bolivarTransferIds = new Set(bolivarRows.map((item) => item.transferId).filter(Boolean));
+      const bolivarByTransfer = new Map(bolivarRows.filter((item) => item.transferId).map((item) => [item.transferId, item]));
+      const entries = dollarRows
+        .filter((item) => item.isCurrencyExchange || (item.transferId && bolivarTransferIds.has(item.transferId)))
+        .map((item) => {
+          const origin = bolivarByTransfer.get(item.transferId);
+          const spentBs = item.spentBs || origin?.spentBs || 0;
+          const purchasedUsd = item.purchasedUsd || 0;
+          return {
+            id: item.id,
+            date: item.date,
+            description: item.description,
+            spentBs,
+            purchasedUsd,
+            exchangeRate: item.exchangeRate || origin?.exchangeRate || (purchasedUsd > 0 ? spentBs / purchasedUsd : 0),
+          };
+        })
+        .sort((first, second) => second.date.localeCompare(first.date));
+      setExchangeAudit(entries);
+      setExchangeAuditPeriod(distributionId);
+    };
+    const stopBolivarRows = onSnapshot(collection(db, "distributions", distributionId, "transactions"), (snapshot) => {
+      bolivarRows = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          date: String(data.date ?? ""),
+          description: String(data.description ?? ""),
+          transferId: String(data.transferId ?? ""),
+          isCurrencyExchange: data.isCurrencyExchange === true,
+          exchangeRate: Number(data.exchangeRate ?? 0),
+          spentBs: Number(data.spentBs ?? data.expenseBs ?? 0),
+          purchasedUsd: Number(data.purchasedUsd ?? 0),
+        };
+      });
+      rebuildAudit();
+    }, () => setErrorMsg("No se pudo cargar la bitácora de divisas."));
+    const stopDollarRows = onSnapshot(collection(db, "distributions", distributionId, "dollarTransactions"), (snapshot) => {
+      dollarRows = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          date: String(data.date ?? ""),
+          description: String(data.description ?? ""),
+          transferId: String(data.transferId ?? ""),
+          isCurrencyExchange: data.isCurrencyExchange === true,
+          exchangeRate: Number(data.exchangeRate ?? 0),
+          spentBs: Number(data.spentBs ?? 0),
+          purchasedUsd: Number(data.purchasedUsd ?? data.incomeUsd ?? 0),
+        };
+      });
+      rebuildAudit();
+    }, () => setErrorMsg("No se pudo cargar la bitácora de divisas."));
+    return () => { stopBolivarRows(); stopDollarRows(); };
+  }, [distributionId]);
+
   const balances = useMemo(() => categories.map((category) => {
     const manual = transactions.filter((item) => item.category === category).reduce((sum, item) => sum + item.income - item.expense, 0);
     const initial = currency === "bs" ? incomes.reduce((sum, income) => sum + income.total * Number(income.percentages[category] ?? 0) / 100, 0) : 0;
@@ -107,6 +172,7 @@ export default function Transfers() {
   }), [exchangeIncomes, exchangeTransactions]);
   const exchangeOriginBalance = exchangeBalances.find((item) => item.category === exchangeOrigin)?.balance ?? 0;
   const selectedDistribution = distributions.find((item) => item.id === distributionId);
+  const visibleExchangeAudit = exchangeAuditPeriod === distributionId ? exchangeAudit : [];
   const lastDay = selectedDistribution ? new Date(selectedDistribution.year, selectedDistribution.month + 1, 0).getDate() : 0;
   const minDate = selectedDistribution ? `${selectedDistribution.year}-${String(selectedDistribution.month + 1).padStart(2, "0")}-01` : "";
   const maxDate = selectedDistribution ? `${selectedDistribution.year}-${String(selectedDistribution.month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}` : "";
@@ -161,7 +227,8 @@ export default function Transfers() {
       const batch = writeBatch(db);
       const originRef = doc(collection(db, "distributions", distributionId, "transactions"));
       const destinationRef = doc(collection(db, "distributions", distributionId, "dollarTransactions"));
-      const linkedData = { transferId: originRef.id, isTransfer: true, isCurrencyExchange: true, date: exchangeDate, description: exchangeDescription.trim(), updatedAt: serverTimestamp() };
+      const exchangeRate = spentBs / purchasedUsd;
+      const linkedData = { transferId: originRef.id, isTransfer: true, isCurrencyExchange: true, date: exchangeDate, description: exchangeDescription.trim(), exchangeRate, spentBs, purchasedUsd, updatedAt: serverTimestamp() };
       batch.set(originRef, { ...linkedData, category: exchangeOrigin, incomeBs: 0, expenseBs: spentBs, createdAt: serverTimestamp() });
       batch.set(destinationRef, { ...linkedData, category: exchangeDestination, incomeUsd: purchasedUsd, expenseUsd: 0, createdAt: serverTimestamp() });
       await batch.commit();
@@ -200,6 +267,10 @@ export default function Transfers() {
             </div>
             <button disabled={saving || exchangeBalances.every((item) => item.balance <= 0)} type="submit" className="mt-4 min-h-12 rounded-xl bg-[#adc0fa] px-5 py-3 text-xs uppercase text-[#121212] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">{saving ? "Guardando..." : "Registrar compra vinculada"}</button>
           </form>
+          <section className="mt-6 rounded-2xl border border-white/15 bg-black/15 p-4 sm:p-5" aria-labelledby="exchange-audit-title">
+            <div className="flex flex-wrap items-end justify-between gap-3"><h2 id="exchange-audit-title" className="text-sm uppercase text-white/85">Bitácora de divisas</h2><span className="text-xs text-white/45">{visibleExchangeAudit.length} operaciones · {monthNames[selectedDistribution.month]} {selectedDistribution.year}</span></div>
+            {visibleExchangeAudit.length === 0 ? <p className="mt-4 border border-dashed border-white/15 p-4 text-xs text-white/50">No hay conversiones registradas en este periodo.</p> : <div className="mt-4 divide-y divide-white/10">{visibleExchangeAudit.map((item) => <article key={item.id} className="grid gap-2 py-4 text-xs sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-5"><div className="min-w-0"><p className="wrap-break-word text-white/80">{item.description}</p><p className="mt-1 text-white/40">{item.date}</p></div><p className="text-[#adc0fa]">Bs {item.spentBs.toFixed(2)}</p><p className="text-emerald-300">$ {item.purchasedUsd.toFixed(2)}</p><p className="text-white/55">Bs {item.exchangeRate.toFixed(4)} / $</p></article>)}</div>}
+          </section>
           <p className="mx-auto mt-5 max-w-5xl text-xs text-white/50">Las transferencias se registran como egreso en el origen e ingreso en el destino dentro de la moneda seleccionada.</p>
         </div>}
       </section>

@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@e965/xlsx": "^0.20.3",
     "@tanstack/react-form": "^1.33.5",
     "firebase": "^12.19.0",
     "lucide-react": "^1.47.0",

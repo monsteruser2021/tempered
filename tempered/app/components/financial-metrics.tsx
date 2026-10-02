@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, ChartNoAxesCombined, Coins, Scale, TrendingUp, Wallet } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChartNoAxesCombined, Coins, Download, Scale, TrendingUp, Wallet } from "lucide-react";
 import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import BackButton from "./back-button";
@@ -18,9 +18,9 @@ const bsCategories = [
 
 type Distribution = { id: string; month: number; year: number };
 type Debt = { type: "receivable" | "payable"; amount: number; currency: "Bs" | "$"; dueDate: string; paid: boolean };
-type Income = { totalBs: number; percentages: Record<string, number>; isRollover: boolean };
-type BsTransaction = { category: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isCurrencyExchange: boolean; transferId: string; sourceSaleId: string };
-type DollarTransaction = { category: string; incomeUsd: number; expenseUsd: number; isCurrencyExchange: boolean; transferId: string; sourceSaleId: string };
+type Income = { description: string; totalBs: number; percentages: Record<string, number>; isRollover: boolean };
+type BsTransaction = { category: string; date: string; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isCurrencyExchange: boolean; exchangeRate: number; transferId: string; sourceSaleId: string };
+type DollarTransaction = { category: string; date: string; description: string; incomeUsd: number; expenseUsd: number; isCurrencyExchange: boolean; isRollover: boolean; exchangeRate: number; transferId: string; sourceSaleId: string };
 type PeriodData = { incomes: Income[]; bsTransactions: BsTransaction[]; dollarTransactions: DollarTransaction[] };
 type CurrencyTotals = { capitalRecovered: number; realizedGain: number };
 type DebtAmounts = Record<"Bs" | "$", number>;
@@ -37,15 +37,18 @@ function getPreviousPeriod(distribution: Distribution | undefined, distributions
 }
 
 function getMonthlyTotals(data: PeriodData | undefined) {
-  if (!data) return { income: 0, expenses: 0 };
+  if (!data) return { income: 0, expenses: 0, incomeUsd: 0, expensesUsd: 0 };
   const incomeFromDistribution = data.incomes
     .filter((item) => !item.isRollover)
     .reduce((sum, item) => sum + item.totalBs, 0);
   const dollarTransferIds = new Set(data.dollarTransactions.map((item) => item.transferId).filter(Boolean));
-  const externalTransactions = data.bsTransactions.filter((item) => !item.isTransfer && !item.isCurrencyExchange && !(item.transferId && dollarTransferIds.has(item.transferId)));
+  const externalTransactions = data.bsTransactions.filter((item) => !item.isTransfer && !item.isCurrencyExchange && item.category !== "Inversión" && !item.sourceSaleId && !(item.transferId && dollarTransferIds.has(item.transferId)));
+  const dollarTransactions = data.dollarTransactions.filter((item) => !item.isRollover && !item.isCurrencyExchange && item.category !== "Inversiones" && !item.transferId && !item.sourceSaleId);
   return {
     income: incomeFromDistribution + externalTransactions.reduce((sum, item) => sum + item.incomeBs, 0),
     expenses: externalTransactions.reduce((sum, item) => sum + item.expenseBs, 0),
+    incomeUsd: dollarTransactions.reduce((sum, item) => sum + item.incomeUsd, 0),
+    expensesUsd: dollarTransactions.reduce((sum, item) => sum + item.expenseUsd, 0),
   };
 }
 
@@ -64,8 +67,11 @@ function Variation({ value, label, increaseIsPositive = true }: { value: number 
   return <span className={`inline-flex items-center gap-1 text-xs tabular-nums ${value === 0 ? "text-white/55" : isPositive ? "text-emerald-300" : "text-rose-300"}`}><Icon size={14} aria-hidden="true" />{Math.abs(value).toFixed(1)}% {label}</span>;
 }
 
-function MetricCard({ title, icon: Icon, children, className = "" }: { title: string; icon: typeof Wallet; children: React.ReactNode; className?: string }) {
-  return <article className={`min-w-0 rounded-lg border border-[#ddab36]/20 bg-[#161616]/85 p-5 shadow-lg shadow-black/20 sm:p-6 ${className}`}>
+function MetricCard({ title, icon: Icon, children, className = "", alert }: { title: string; icon: typeof Wallet; children: React.ReactNode; className?: string; alert?: "warning" | "critical" }) {
+  const alertStyle = alert === "critical"
+    ? { borderColor: "rgb(251 113 133 / 0.55)", backgroundColor: "rgb(76 5 25 / 0.26)" }
+    : alert === "warning" ? { borderColor: "rgb(251 191 36 / 0.5)", backgroundColor: "rgb(69 26 3 / 0.24)" } : undefined;
+  return <article className={`min-w-0 rounded-lg border border-[#ddab36]/20 bg-[#161616]/85 p-5 shadow-lg shadow-black/20 sm:p-6 ${className}`} style={alertStyle}>
     <h2 className="flex items-center gap-2 text-xs uppercase text-white/65"><Icon size={16} className="text-[#ddab36]" aria-hidden="true" />{title}</h2>
     <div className="mt-5">{children}</div>
   </article>;
@@ -75,6 +81,7 @@ export default function FinancialMetrics() {
   const { userId } = useSession();
   const [distributions, setDistributions] = useState<Distribution[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [budgetThreshold, setBudgetThreshold] = useState(80);
   const [periodData, setPeriodData] = useState<Record<string, PeriodData>>({});
   const [loadedCollections, setLoadedCollections] = useState<Record<string, boolean>>({});
   const [debts, setDebts] = useState<Debt[]>([]);
@@ -138,9 +145,13 @@ export default function FinancialMetrics() {
       unsubscribers.push(onSnapshot(collection(base, "dollarTransactions"), (snapshot) => {
         updatePeriodData(distribution.id, "dollarTransactions", snapshot.docs.map((item) => ({
           category: String(item.data().category ?? ""),
+          date: String(item.data().date ?? ""),
+          description: String(item.data().description ?? ""),
           incomeUsd: Number(item.data().incomeUsd ?? 0),
           expenseUsd: Number(item.data().expenseUsd ?? 0),
           isCurrencyExchange: item.data().isCurrencyExchange === true,
+          isRollover: item.data().isRollover === true,
+          exchangeRate: Number(item.data().exchangeRate ?? 0),
           transferId: String(item.data().transferId ?? ""),
           sourceSaleId: String(item.data().sourceSaleId ?? ""),
         })));
@@ -149,10 +160,13 @@ export default function FinancialMetrics() {
       unsubscribers.push(onSnapshot(collection(base, "transactions"), (snapshot) => {
         updatePeriodData(distribution.id, "bsTransactions", snapshot.docs.map((item) => ({
           category: String(item.data().category ?? ""),
+          date: String(item.data().date ?? ""),
+          description: String(item.data().description ?? ""),
           incomeBs: Number(item.data().incomeBs ?? 0),
           expenseBs: Number(item.data().expenseBs ?? 0),
           isTransfer: item.data().isTransfer === true || Boolean(item.data().transferId),
           isCurrencyExchange: item.data().isCurrencyExchange === true,
+          exchangeRate: Number(item.data().exchangeRate ?? 0),
           transferId: String(item.data().transferId ?? ""),
           sourceSaleId: String(item.data().sourceSaleId ?? ""),
         })));
@@ -161,6 +175,7 @@ export default function FinancialMetrics() {
       if (!detailedIds.has(distribution.id)) return;
       unsubscribers.push(onSnapshot(collection(base, "incomes"), (snapshot) => {
         updatePeriodData(distribution.id, "incomes", snapshot.docs.map((item) => ({
+          description: String(item.data().description ?? ""),
           totalBs: Number(item.data().totalBs ?? 0),
           percentages: (item.data().percentages ?? {}) as Record<string, number>,
           isRollover: item.data().isRollover === true,
@@ -187,6 +202,12 @@ export default function FinancialMetrics() {
   const metrics = useMemo(() => {
     const currentIncome = currentTotals.income;
     const currentExpenses = currentTotals.expenses;
+    const investmentBs = selectedData.bsTransactions
+      .filter((item) => item.category === "Inversión" && !item.isTransfer && !item.isCurrencyExchange)
+      .reduce((sum, item) => sum + item.expenseBs, 0);
+    const investmentUsd = selectedData.dollarTransactions
+      .filter((item) => item.category === "Inversiones" && !item.isRollover && !item.isCurrencyExchange && !item.transferId)
+      .reduce((sum, item) => sum + item.expenseUsd, 0);
     const bsBalance = selectedData.incomes.reduce((sum, income) => sum + bsCategories.reduce((allocated, category) => allocated + income.totalBs * Number(income.percentages[category] ?? 0) / 100, 0), 0)
       + selectedData.bsTransactions.reduce((sum, transaction) => sum + transaction.incomeBs - transaction.expenseBs, 0);
     const usdBalance = selectedData.dollarTransactions.reduce((sum, transaction) => sum + transaction.incomeUsd - transaction.expenseUsd, 0);
@@ -225,7 +246,11 @@ export default function FinancialMetrics() {
     return {
       currentIncome,
       currentExpenses,
-      savingsRate: currentIncome > 0 ? ((currentIncome - currentExpenses) / currentIncome) * 100 : null,
+      currentIncomeUsd: currentTotals.incomeUsd,
+      currentExpensesUsd: currentTotals.expensesUsd,
+      investmentBs,
+      investmentUsd,
+      savingsRate: currentIncome > 0 ? ((currentIncome - currentExpenses - investmentBs) / currentIncome) * 100 : null,
       incomeVariation: getVariation(currentIncome, previousTotals.income, Boolean(previousDistribution)),
       expenseVariation: getVariation(currentExpenses, previousTotals.expenses, Boolean(previousDistribution)),
       bsBalance,
@@ -239,6 +264,21 @@ export default function FinancialMetrics() {
     };
   }, [currentTotals, distributions, periodData, previousDistribution, previousTotals, selectedData, selectedDistribution]);
 
+  const expenseRatios = [
+    ...(metrics.currentIncome > 0 ? [metrics.currentExpenses / metrics.currentIncome * 100] : []),
+    ...(metrics.currentIncomeUsd > 0 ? [metrics.currentExpensesUsd / metrics.currentIncomeUsd * 100] : []),
+  ];
+  const investmentRatios = [
+    ...(metrics.currentIncome > 0 ? [metrics.investmentBs / metrics.currentIncome * 100] : []),
+    ...(metrics.currentIncomeUsd > 0 ? [metrics.investmentUsd / metrics.currentIncomeUsd * 100] : []),
+  ];
+  const operatingExpenseAlert = getAlertLevel(expenseRatios, budgetThreshold);
+  const investmentAlert = getAlertLevel(investmentRatios, budgetThreshold);
+  const budgetAlert = operatingExpenseAlert || investmentAlert;
+  const operatingExpenseRatio = metrics.currentIncome > 0 ? metrics.currentExpenses / metrics.currentIncome * 100 : null;
+  const investmentRatioBs = metrics.currentIncome > 0 ? metrics.investmentBs / metrics.currentIncome * 100 : null;
+  const investmentRatioUsd = metrics.currentIncomeUsd > 0 ? metrics.investmentUsd / metrics.currentIncomeUsd * 100 : null;
+
   if (!userId) return <main className="flex min-h-screen items-center justify-center px-5 py-10"><section className="w-full max-w-3xl rounded-xl border border-white/15 bg-black/30 p-8 text-center text-white"><p className="text-sm text-white/70">Inicia sesión para consultar tus métricas financieras.</p><BackButton href="/isorropia">Volver a Isorropia</BackButton></section></main>;
 
   const periodLoading = Boolean(selectedId) && ["incomes", "bsTransactions", "dollarTransactions"].some((key) => !loadedCollections[`${selectedId}:${key}`]);
@@ -247,25 +287,140 @@ export default function FinancialMetrics() {
   const loading = !distributionsLoaded || !debtsLoaded || periodLoading || previousLoading || historyLoading;
   const selectedPeriodLabel = selectedDistribution ? `${monthNames[selectedDistribution.month]} ${selectedDistribution.year}` : "Sin distribución";
 
+  const exportSelectedPeriod = async () => {
+    if (!selectedDistribution) return;
+    const XLSX = await import("@e965/xlsx");
+    const debtNetBs = debtTotals.receivable.Bs - debtTotals.payable.Bs;
+    const debtNetUsd = debtTotals.receivable["$"] - debtTotals.payable["$"];
+    const usdTransferIds = new Set(selectedData.dollarTransactions.map((item) => item.transferId).filter(Boolean));
+    const bsTransferIds = new Set(selectedData.bsTransactions.map((item) => item.transferId).filter(Boolean));
+    const dollarPurchases = selectedData.dollarTransactions.filter((item) => item.isCurrencyExchange || (item.transferId && bsTransferIds.has(item.transferId)));
+    const bolivarPayments = selectedData.bsTransactions.filter((item) => item.isCurrencyExchange || (item.transferId && usdTransferIds.has(item.transferId)));
+    const periodDollarsBought = dollarPurchases.reduce((sum, item) => sum + item.incomeUsd, 0);
+    const periodBolivaresInvested = bolivarPayments.reduce((sum, item) => sum + item.expenseBs, 0);
+    const periodExchangeRate = periodDollarsBought > 0 ? periodBolivaresInvested / periodDollarsBought : null;
+
+    const summarySheet = XLSX.utils.aoa_to_sheet([
+      ["ISORROPIA KAIROS", "REPORTE FINANCIERO"],
+      ["Periodo", selectedPeriodLabel],
+      [],
+      ["RESUMEN FINANCIERO", "Bolívares (Bs)", "Dólares ($)"],
+      ["Ingresos totales", metrics.currentIncome, metrics.currentIncomeUsd],
+      ["Gastos operativos", metrics.currentExpenses, metrics.currentExpensesUsd],
+      ["Tasa de ahorro / retención", metrics.savingsRate === null ? "N/D" : metrics.savingsRate / 100, "N/D"],
+      ["Inversión registrada", metrics.investmentBs, metrics.investmentUsd],
+      ["Capital recuperado", metrics.investmentTotals.Bs.capitalRecovered, metrics.investmentTotals["$"].capitalRecovered],
+      ["Ganancia neta realizada", metrics.investmentTotals.Bs.realizedGain, metrics.investmentTotals["$"].realizedGain],
+      ["ROI realizado", metrics.investmentTotals.Bs.capitalRecovered > 0 ? metrics.investmentTotals.Bs.realizedGain / metrics.investmentTotals.Bs.capitalRecovered : "N/D", metrics.investmentTotals["$"].capitalRecovered > 0 ? metrics.investmentTotals["$"].realizedGain / metrics.investmentTotals["$"].capitalRecovered : "N/D"],
+    ]);
+    summarySheet["!cols"] = [{ wch: 34 }, { wch: 23 }, { wch: 23 }];
+    summarySheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }];
+    [5, 6, 8, 9, 10].forEach((row) => {
+      summarySheet[`B${row}`].z = "#,##0.00";
+      summarySheet[`C${row}`].z = "#,##0.00";
+    });
+    summarySheet["B7"].z = "0.00%";
+    summarySheet["B11"].z = "0.00%";
+    summarySheet["C11"].z = "0.00%";
+
+    const balanceSheet = XLSX.utils.aoa_to_sheet([
+      ["SECCIÓN", "CONCEPTO", "MONEDA", "MONTO"],
+      ["Activos", "Saldo al cierre del periodo", "Bs", metrics.bsBalance],
+      ["Activos", "Saldo al cierre del periodo", "$", metrics.usdBalance],
+      ["Divisas del periodo", "Dólares adquiridos", "$", periodDollarsBought],
+      ["Divisas del periodo", "Bolívares invertidos", "Bs", periodBolivaresInvested],
+      ["Divisas del periodo", "Tasa promedio de compra (Bs/USD)", "Bs/USD", periodExchangeRate ?? "N/D"],
+      ["Deudas pendientes", "Por cobrar", "Bs", debtTotals.receivable.Bs],
+      ["Deudas pendientes", "Por cobrar", "$", debtTotals.receivable["$"]],
+      ["Deudas pendientes", "Por pagar", "Bs", debtTotals.payable.Bs],
+      ["Deudas pendientes", "Por pagar", "$", debtTotals.payable["$"]],
+      ["Exposición neta", "Por cobrar menos por pagar", "Bs", debtNetBs],
+      ["Exposición neta", "Por cobrar menos por pagar", "$", debtNetUsd],
+    ]);
+    balanceSheet["!cols"] = [{ wch: 23 }, { wch: 40 }, { wch: 14 }, { wch: 20 }];
+    balanceSheet["!autofilter"] = { ref: "A1:D12" };
+    for (let row = 2; row <= 12; row += 1) balanceSheet[`D${row}`].z = row === 6 ? "#,##0.0000" : "#,##0.00";
+
+    const movementRows: (string | number)[][] = [];
+    selectedData.incomes.forEach((income) => {
+      const allocations = Object.entries(income.percentages)
+        .filter(([, percentage]) => Number(percentage) > 0)
+        .map(([category, percentage]) => `${category} (${Number(percentage)}%)`)
+        .join(", ");
+      movementRows.push([
+        `${selectedDistribution.year}-${String(selectedDistribution.month + 1).padStart(2, "0")}-01`,
+        income.isRollover ? "Saldo arrastrado" : "Ingreso distribuido",
+        allocations,
+        income.description || "Ingreso del periodo",
+        "Bs",
+        income.totalBs,
+        "",
+        "",
+      ]);
+    });
+    selectedData.bsTransactions.forEach((transaction) => {
+      const reference = transaction.sourceSaleId || transaction.transferId;
+      if (transaction.incomeBs !== 0) movementRows.push([transaction.date, transaction.isCurrencyExchange ? "Compra de divisas" : transaction.isTransfer ? "Transferencia" : "Ingreso", transaction.category, transaction.description, "Bs", transaction.incomeBs, transaction.exchangeRate || "", reference]);
+      if (transaction.expenseBs !== 0) movementRows.push([transaction.date, transaction.isCurrencyExchange ? "Compra de divisas" : transaction.isTransfer ? "Transferencia" : "Egreso", transaction.category, transaction.description, "Bs", transaction.expenseBs, transaction.exchangeRate || "", reference]);
+    });
+    selectedData.dollarTransactions.forEach((transaction) => {
+      const reference = transaction.sourceSaleId || transaction.transferId;
+      if (transaction.incomeUsd !== 0) movementRows.push([transaction.date, transaction.isRollover ? "Saldo arrastrado" : transaction.isCurrencyExchange ? "Compra de divisas" : transaction.transferId ? "Transferencia" : "Ingreso", transaction.category, transaction.description, "$", transaction.incomeUsd, transaction.exchangeRate || "", reference]);
+      if (transaction.expenseUsd !== 0) movementRows.push([transaction.date, transaction.transferId ? "Transferencia" : "Egreso", transaction.category, transaction.description, "$", transaction.expenseUsd, transaction.exchangeRate || "", reference]);
+    });
+    movementRows.sort((first, second) => String(first[0]).localeCompare(String(second[0])));
+    const movementSheet = XLSX.utils.aoa_to_sheet([
+      ["FECHA", "TIPO", "CATEGORÍA", "CONCEPTO", "MONEDA", "MONTO", "TASA Bs/USD", "REFERENCIA"],
+      ...movementRows,
+    ]);
+    movementSheet["!cols"] = [{ wch: 14 }, { wch: 23 }, { wch: 25 }, { wch: 42 }, { wch: 12 }, { wch: 18 }, { wch: 16 }, { wch: 28 }];
+    if (movementRows.length > 0) movementSheet["!autofilter"] = { ref: `A1:H${movementRows.length + 1}` };
+    for (let row = 2; row <= movementRows.length + 1; row += 1) {
+      movementSheet[`F${row}`].z = "#,##0.00";
+      if (movementSheet[`G${row}`]) movementSheet[`G${row}`].z = "#,##0.0000";
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumen");
+    XLSX.utils.book_append_sheet(workbook, balanceSheet, "Activos y deudas");
+    XLSX.utils.book_append_sheet(workbook, movementSheet, "Movimientos");
+    XLSX.writeFile(workbook, `Isorropia_Reporte_${monthNames[selectedDistribution.month]}_${selectedDistribution.year}.xlsx`, { compression: true });
+  };
+
   return <main className="min-h-screen w-full px-4 py-8 text-white sm:px-6 sm:py-10">
     <section className="mx-auto w-full max-w-7xl">
       <BackButton href="/isorropia">Volver a Isorropia</BackButton>
       <header className="mt-8 flex flex-col gap-5 border-b border-[#ddab36]/20 pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div><p className="text-xs uppercase text-white/45">Isorropia / Análisis</p><h1 className="font-display mt-3 text-2xl uppercase text-[#ddab36] sm:text-4xl">Métricas financieras</h1><p className="mt-3 text-sm text-white/55">Ingresos, retención, activos y rendimiento de inversión.</p></div>
-        <label className="w-full text-xs uppercase text-white/60 sm:max-w-64">Periodo analizado<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={!distributions.length} className="mt-2 min-h-11 w-full rounded-lg border border-white/20 bg-[#171717] px-3 py-2 text-sm text-white outline-none focus:border-[#ddab36]">{distributions.length ? distributions.map((item) => <option key={item.id} value={item.id}>{monthNames[item.month]} {item.year}</option>) : <option value="">No hay periodos</option>}</select></label>
+        <div className="grid w-full gap-3 sm:max-w-sm sm:grid-cols-2">
+          <label className="text-xs uppercase text-white/60">Periodo analizado<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={!distributions.length} className="mt-2 min-h-11 w-full rounded-lg border border-white/20 bg-[#171717] px-3 py-2 text-sm text-white outline-none focus:border-[#ddab36]">{distributions.length ? distributions.map((item) => <option key={item.id} value={item.id}>{monthNames[item.month]} {item.year}</option>) : <option value="">No hay periodos</option>}</select></label>
+          <fieldset>
+            <legend className="text-xs uppercase text-white/60">Umbral de alerta</legend>
+            <div className="mt-2 flex min-h-11 rounded-lg border border-white/20 bg-[#171717] p-1" role="group" aria-label="Porcentaje de ingreso para alertas">
+              {[70, 80, 90].map((threshold) => <button key={threshold} type="button" aria-pressed={budgetThreshold === threshold} onClick={() => setBudgetThreshold(threshold)} className={`min-w-0 flex-1 rounded-md px-2 text-xs tabular-nums transition ${budgetThreshold === threshold ? "bg-[#ddab36] text-[#121212]" : "text-white/60 hover:bg-white/10"}`}>{threshold}%</button>)}
+            </div>
+          </fieldset>
+          {budgetAlert && <p role="status" className={`col-span-full text-xs ${budgetAlert === "critical" ? "text-rose-200" : "text-amber-200"}`}>El gasto operativo o la inversión alcanzó el umbral seleccionado.</p>}
+          <button type="button" onClick={() => void exportSelectedPeriod()} disabled={!selectedDistribution || loading} className="col-span-full inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[#ddab36]/40 bg-[#ddab36]/10 px-4 py-2 text-xs uppercase text-[#f1cb74] transition hover:bg-[#ddab36]/20 disabled:cursor-not-allowed disabled:opacity-40"><Download size={16} aria-hidden="true" />Exportar resumen del periodo</button>
+        </div>
       </header>
 
       {error && <p role="alert" className="mt-5 rounded-lg border border-rose-400/30 bg-rose-950/40 p-3 text-sm text-rose-200">{error}</p>}
       {loading ? <p className="mt-8 text-sm text-white/50">Cargando métricas en tiempo real...</p> : !selectedDistribution ? <p className="mt-8 rounded-lg border border-dashed border-white/20 p-8 text-center text-sm text-white/55">Crea una distribución para comenzar a ver el análisis financiero.</p> : <>
         <p className="mt-6 text-xs uppercase text-white/45">Resumen de {selectedPeriodLabel}</p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <MetricCard title="Tasa de ahorro / retención" icon={Wallet}>
+          <MetricCard title="Tasa de ahorro / retención" icon={Wallet} alert={operatingExpenseAlert}>
             <p className="font-display text-3xl text-[#ddab36]">{metrics.savingsRate === null ? "--" : `${metrics.savingsRate.toFixed(1)}%`}</p>
             <p className="mt-3 text-xs leading-5 text-white/50">Ingreso operativo menos gastos, sobre el ingreso total del periodo.</p>
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-2 text-xs"><span className="text-white/55">Gastos / ingresos en Bs</span><span className={operatingExpenseAlert ? "text-amber-200" : "text-white/70"}>{operatingExpenseRatio === null ? "Sin ingresos" : `${operatingExpenseRatio.toFixed(1)}%`}</span></div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10"><span className={`block h-full rounded-full transition-[width] ${operatingExpenseAlert ? "bg-amber-400" : "bg-[#ddab36]"}`} style={{ width: `${Math.max(0, Math.min(100, operatingExpenseRatio ?? 0))}%` }} /></div>
+              {operatingExpenseAlert && <p role="status" className="mt-2 text-xs text-amber-200">Los gastos superan el umbral del {budgetThreshold}%.</p>}
+            </div>
             <div className="mt-5 grid grid-cols-2 gap-3 border-t border-white/10 pt-4 text-xs"><div><p className="text-white/45">Ingresos</p><p className="mt-1 text-white">Bs {formatAmount(metrics.currentIncome)}</p></div><div><p className="text-white/45">Gastos operativos</p><p className="mt-1 text-white">Bs {formatAmount(metrics.currentExpenses)}</p></div></div>
           </MetricCard>
 
-          <MetricCard title="Inversión vs. ganancia" icon={TrendingUp} className="sm:col-span-2 xl:col-span-1">
+          <MetricCard title="Inversión vs. ganancia" icon={TrendingUp} className="sm:col-span-2 xl:col-span-1" alert={investmentAlert}>
             <div className="space-y-4">{(["Bs", "$"] as const).map((currency) => {
               const totals = metrics.investmentTotals[currency];
               const roi = totals.capitalRecovered > 0 ? totals.realizedGain / totals.capitalRecovered * 100 : null;
@@ -275,6 +430,11 @@ export default function FinancialMetrics() {
                 <p className="mt-2 text-xs leading-5 text-white/55">Capital recuperado {currency} {formatAmount(totals.capitalRecovered)} <span className="px-1 text-white/25">/</span> Ganancia neta {currency} {formatAmount(totals.realizedGain)}</p>
               </div>;
             })}</div>
+            <div className="mt-4 border-t border-white/10 pt-3">
+              <div className="flex items-center justify-between gap-2 text-xs"><span className="text-white/55">Inversión / ingreso del periodo</span><span className={investmentAlert ? "text-amber-200" : "text-white/70"}>Bs {investmentRatioBs === null ? "--" : `${investmentRatioBs.toFixed(1)}%`} · $ {investmentRatioUsd === null ? "--" : `${investmentRatioUsd.toFixed(1)}%`}</span></div>
+              <div className="mt-2 flex h-2 gap-1"><span className="h-full flex-1 overflow-hidden rounded-full bg-white/10"><span className={`block h-full ${investmentAlert ? "bg-amber-400" : "bg-[#ddab36]"}`} style={{ width: `${Math.max(0, Math.min(100, investmentRatioBs ?? 0))}%` }} /></span><span className="h-full flex-1 overflow-hidden rounded-full bg-white/10"><span className={`block h-full ${investmentAlert ? "bg-amber-400" : "bg-emerald-400"}`} style={{ width: `${Math.max(0, Math.min(100, investmentRatioUsd ?? 0))}%` }} /></span></div>
+              {investmentAlert && <p role="status" className="mt-2 text-xs text-amber-200">La inversión supera el umbral del {budgetThreshold}% en su moneda.</p>}
+            </div>
             <p className="mt-4 border-t border-white/10 pt-3 text-[11px] leading-5 text-white/40">Calculado con capital recuperado y ganancias netas vinculados a ventas registradas en las distribuciones de este periodo.</p>
           </MetricCard>
 
@@ -316,4 +476,10 @@ export default function FinancialMetrics() {
       </>}
     </section>
   </main>;
+}
+
+function getAlertLevel(ratios: number[], threshold: number): "warning" | "critical" | undefined {
+  if (ratios.some((ratio) => ratio >= threshold + 20)) return "critical";
+  if (ratios.some((ratio) => ratio >= threshold)) return "warning";
+  return undefined;
 }

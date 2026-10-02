@@ -27,6 +27,7 @@ type Investment = {
   status: ProjectStatus;
 };
 type Totals = Record<Currency, number>;
+type SaleRecord = { id: string; investmentId: string; currency: Currency; quantity: number; recoveredCapital: number; netProfit: number; date: string };
 type GrowthTab = "projects" | "inventory" | "history";
 
 const statuses: { value: ProjectStatus; label: string }[] = [
@@ -70,6 +71,7 @@ export default function MythicalGrowthInventory() {
   const { userId } = useSession();
   const [activeTab, setActiveTab] = useState<GrowthTab>("projects");
   const [investments, setInvestments] = useState<Investment[]>([]);
+  const [sales, setSales] = useState<SaleRecord[]>([]);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(categories[0]);
   const [currency, setCurrency] = useState<Currency>("Bs");
@@ -95,7 +97,27 @@ export default function MythicalGrowthInventory() {
     );
   }, [userId]);
 
-  const committed = useMemo(() => investments.filter((item) => item.status !== "discarded").reduce<Totals>((totals, item) => {
+  useEffect(() => {
+    if (!userId) return;
+    return onSnapshot(
+      query(collection(db, "mythicalSales"), where("userId", "==", userId)),
+      (snapshot) => setSales(snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          investmentId: String(data.investmentId ?? ""),
+          currency: data.currency === "$" ? "$" : "Bs",
+          quantity: Math.max(0, Math.floor(Number(data.quantity ?? 0))),
+          recoveredCapital: Number(data.recoveredCapital ?? 0),
+          netProfit: Number(data.netProfit ?? 0),
+          date: String(data.date ?? ""),
+        };
+      })),
+      () => setError("No se pudo cargar el historial de ventas."),
+    );
+  }, [userId]);
+
+  const committed = useMemo(() => investments.filter((item) => item.status === "process").reduce<Totals>((totals, item) => {
     totals[item.currency] += item.cost * item.quantity;
     return totals;
   }, { ...emptyTotals }), [investments]);
@@ -109,6 +131,10 @@ export default function MythicalGrowthInventory() {
     .sort((first, second) => first.title.localeCompare(second.title));
   const closedInvestments = investments.filter((item) => item.status === "liquidated" || item.status === "discarded")
     .sort((first, second) => statusPriority[first.status] - statusPriority[second.status] || first.title.localeCompare(second.title));
+  const salesByInvestment = useMemo(() => sales.reduce<Record<string, SaleRecord[]>>((grouped, sale) => {
+    (grouped[sale.investmentId] ??= []).push(sale);
+    return grouped;
+  }, {}), [sales]);
   const previewQuantity = Math.max(1, Number(quantity) || 1);
   const minimumQuantity = Math.max(1, investments.find((item) => item.id === editingId)?.soldUnits ?? 1);
 
@@ -300,7 +326,7 @@ export default function MythicalGrowthInventory() {
       {activeTab === "history" && <section key="history-panel" role="tabpanel" id="history-panel" aria-labelledby="history-tab" className="item-enter mt-8" tabIndex={0}>
         <div className="flex flex-wrap items-end justify-between gap-3"><h2 id="closed-title" className="text-xl uppercase text-[#d9a7ff]">Historial de Inversiones</h2><span className="text-xs text-white/50">{closedInvestments.length} registros</span></div>
         {closedInvestments.length === 0 ? <p className="mt-5 border border-dashed border-[#d9a7ff]/30 p-5 text-sm text-white/55">No hay inversiones liquidadas o descartadas.</p> : (
-          <div className="mt-5 grid gap-4 lg:grid-cols-2">{closedInvestments.map((investment) => <ProjectCard key={investment.id} investment={investment} actionId={actionId} onEdit={edit} onRemove={remove} onStatus={updateStatus} closed />)}</div>
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">{closedInvestments.map((investment) => <ProjectCard key={investment.id} investment={investment} sales={salesByInvestment[investment.id] ?? []} actionId={actionId} onEdit={edit} onRemove={remove} onStatus={updateStatus} closed />)}</div>
         )}
       </section>
       }
@@ -364,8 +390,9 @@ function Metric({ title, totals }: { title: string; totals: Totals }) {
   return <article className="min-w-0 border border-[#d9a7ff]/30 bg-black/45 p-5"><h2 className="text-xs uppercase tracking-[0.12em] text-white/60">{title}</h2><div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xl text-[#d9a7ff]"><span>{totals.Bs.toFixed(2)} Bs</span><span>{totals["$"].toFixed(2)} $</span></div><p className="mt-2 text-xs uppercase text-white/40">Proyección por moneda</p></article>;
 }
 
-function ProjectCard({ investment, actionId, onEdit, onRemove, onStatus, closed = false }: {
+function ProjectCard({ investment, sales = [], actionId, onEdit, onRemove, onStatus, closed = false }: {
   investment: Investment;
+  sales?: SaleRecord[];
   actionId: string;
   onEdit: (investment: Investment) => void;
   onRemove: (investment: Investment) => void;
@@ -374,9 +401,14 @@ function ProjectCard({ investment, actionId, onEdit, onRemove, onStatus, closed 
 }) {
   const totalCost = investment.cost * investment.quantity;
   const totalSale = investment.saleEstimate * investment.quantity;
+  const projectSales = sales.filter((sale) => sale.currency === investment.currency);
+  const realizedCost = projectSales.reduce((sum, sale) => sum + sale.recoveredCapital, 0);
+  const realizedGain = projectSales.reduce((sum, sale) => sum + sale.netProfit, 0);
+  const realizedRevenue = realizedCost + realizedGain;
   return <article className={`min-w-0 border ${closed ? "border-white/15 bg-black/25" : "border-[#d9a7ff]/25 bg-black/40"} p-4 sm:p-5`}>
     <div className="flex min-w-0 items-start justify-between gap-4"><div className="min-w-0"><h3 className="wrap-break-word text-sm uppercase text-white">{investment.title}</h3><p className="mt-2 wrap-break-word text-xs uppercase text-white/55">{investment.category} · {investment.condition} · {investment.quantity} unidades</p></div><span className="shrink-0 text-xs text-[#d9a7ff]">{investment.currency}</span></div>
     <div className="mt-4 grid grid-cols-2 gap-3 border-y border-white/10 py-3 text-xs"><p className="text-white/65">Costo unitario: <strong className="text-white">{format(investment.cost, investment.currency)}</strong></p><p className="text-white/65">Venta unitaria: <strong className="text-white">{format(investment.saleEstimate, investment.currency)}</strong></p><p className="text-white/55">Inversión del lote: {format(totalCost, investment.currency)}</p><p className="text-white/55">Venta estimada: {format(totalSale, investment.currency)}</p><p className="text-white/55">Stock: {investment.remainingStock} / {investment.quantity}</p><p className={profit(investment.cost, investment.saleEstimate) >= 0 ? "text-emerald-300" : "text-red-300"}>Neto estimado: {format(profit(investment.cost, investment.saleEstimate) * investment.quantity, investment.currency)}</p><p className="text-[#d9a7ff]">ROI: {(investment.cost > 0 ? profit(investment.cost, investment.saleEstimate) / investment.cost * 100 : 0).toFixed(2)}%</p></div>
-    <div className="mt-4 flex flex-wrap items-center gap-2"><select aria-label={`Cambiar estado de ${investment.title}`} value={investment.status} onChange={(event) => void onStatus(investment, event.target.value as ProjectStatus)} disabled={Boolean(actionId)} className="min-h-10 max-w-full border border-white/20 bg-[#121212] px-3 py-2 text-xs text-white">{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button type="button" onClick={() => onEdit(investment)} disabled={Boolean(actionId)} className="min-h-10 border border-white/20 px-3 py-2 text-xs uppercase text-white/75">Editar</button><button type="button" onClick={() => onRemove(investment)} disabled={Boolean(actionId)} className="min-h-10 border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button></div>
+    {closed && <div className="mt-4 border border-white/10 bg-black/25 p-3"><h4 className="text-[11px] uppercase text-[#d9a7ff]">Resultado real de ventas</h4>{projectSales.length === 0 ? <p className="mt-2 text-xs text-white/45">Sin ventas registradas para este proyecto.</p> : <div className="mt-3 grid grid-cols-2 gap-3 text-xs"><p className="text-white/60">Costo vendido: <strong className="text-white">{format(realizedCost, investment.currency)}</strong></p><p className="text-white/60">Precio final: <strong className="text-white">{format(realizedRevenue, investment.currency)}</strong></p><p className="text-white/60">Unidades vendidas: <strong className="text-white">{projectSales.reduce((sum, sale) => sum + sale.quantity, 0)}</strong></p><p className={realizedGain >= 0 ? "text-emerald-300" : "text-red-300"}>Ganancia neta: <strong>{format(realizedGain, investment.currency)}</strong></p><p className="col-span-2 text-[#d9a7ff]">ROI realizado: {realizedCost > 0 ? `${(realizedGain / realizedCost * 100).toFixed(2)}%` : "--"}</p></div>}</div>}
+    <div className="mt-4 flex flex-wrap items-center gap-2">{!closed && investment.status === "evaluation" && <button type="button" onClick={() => void onStatus(investment, "process")} disabled={Boolean(actionId)} className="min-h-10 border border-emerald-300/45 bg-emerald-300/10 px-3 py-2 text-xs uppercase text-emerald-100 hover:bg-emerald-300/20">Confirmar y pasar al inventario</button>}<select aria-label={`Cambiar estado de ${investment.title}`} value={investment.status} onChange={(event) => void onStatus(investment, event.target.value as ProjectStatus)} disabled={Boolean(actionId)} className="min-h-10 max-w-full border border-white/20 bg-[#121212] px-3 py-2 text-xs text-white">{statuses.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><button type="button" onClick={() => onEdit(investment)} disabled={Boolean(actionId)} className="min-h-10 border border-white/20 px-3 py-2 text-xs uppercase text-white/75">Editar</button><button type="button" onClick={() => onRemove(investment)} disabled={Boolean(actionId)} className="min-h-10 border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button></div>
   </article>;
 }
