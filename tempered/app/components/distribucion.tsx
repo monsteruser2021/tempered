@@ -7,6 +7,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -23,6 +24,7 @@ const categories = [
   "Gastos básicos", "Fondo de emergencia", "Inversión", "Ahorro",
   "Transporte", "Caridad", "Lujo/gustos", "Otros gastos",
 ];
+const dollarCategories = ["Inversiones", "Ahorro", "Fondo de emergencia"];
 const months = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
@@ -37,6 +39,7 @@ type Distribution = {
 };
 type PreviousIncome = { totalBs: number; percentages: Record<string, number> };
 type PreviousTransaction = { category: string; incomeBs: number; expenseBs: number };
+type PreviousDollarTransaction = { category: string; incomeUsd: number; expenseUsd: number };
 
 const periodValue = (year: number, month: number) => year * 12 + month;
 const periodDocumentId = (userId: string, year: number, month: number) => `period-${encodeURIComponent(userId)}-${year}-${String(month + 1).padStart(2, "0")}`;
@@ -74,33 +77,49 @@ export default function Distribucion() {
         }
       }
 
+      const currentRef = doc(db, "distributions", currentDistribution.id);
       const legacyDistributions = currentDistributions.filter((item) => item.isAutomatic && item.id !== currentDistribution.id);
       if (legacyDistributions.length > 0) {
         const migrationBatch = writeBatch(db);
         for (const legacyDistribution of legacyDistributions) {
-          const legacyIncomes = await getDocs(collection(db, "distributions", legacyDistribution.id, "incomes"));
+          const [legacyIncomes, legacyDollarTransactions] = await Promise.all([
+            getDocs(collection(db, "distributions", legacyDistribution.id, "incomes")),
+            getDocs(collection(db, "distributions", legacyDistribution.id, "dollarTransactions")),
+          ]);
           legacyIncomes.docs.forEach((income) => {
             migrationBatch.set(doc(db, "distributions", currentDistribution.id, "incomes", income.id), income.data(), { merge: true });
             migrationBatch.delete(income.ref);
+          });
+          legacyDollarTransactions.docs.forEach((transaction) => {
+            migrationBatch.set(doc(db, "distributions", currentDistribution.id, "dollarTransactions", transaction.id), transaction.data(), { merge: true });
+            migrationBatch.delete(transaction.ref);
           });
           migrationBatch.delete(doc(db, "distributions", legacyDistribution.id));
         }
         await migrationBatch.commit();
       }
 
-      const incomeSnapshot = await getDocs(collection(db, "distributions", currentDistribution.id, "incomes"));
-      if (incomeSnapshot.docs.some((item) => item.data().isRollover === true)) return;
+      const [incomeSnapshot, dollarTransactionSnapshot, currentSnapshot] = await Promise.all([
+        getDocs(collection(db, "distributions", currentDistribution.id, "incomes")),
+        getDocs(collection(db, "distributions", currentDistribution.id, "dollarTransactions")),
+        getDoc(currentRef),
+      ]);
+      const currentData = currentSnapshot.data() ?? {};
+      const hasBsRollover = incomeSnapshot.docs.some((item) => item.data().isRollover === true);
+      const hasDollarRollover = dollarTransactionSnapshot.docs.some((item) => item.data().isRollover === true);
 
       const previous = available
         .filter((item) => periodValue(item.year, item.month) < currentPeriod)
-        .sort((first, second) => Number(first.isAutomatic) - Number(second.isAutomatic) || periodValue(second.year, second.month) - periodValue(first.year, first.month))[0];
+        .sort((first, second) => periodValue(second.year, second.month) - periodValue(first.year, first.month) || Number(first.isAutomatic) - Number(second.isAutomatic))[0];
       const balances = Object.fromEntries(categories.map((category) => [category, 0])) as Record<string, number>;
+      const dollarBalances = Object.fromEntries(dollarCategories.map((category) => [category, 0])) as Record<string, number>;
       if (previous) {
-        const [incomeSnapshot, transactionSnapshot] = await Promise.all([
+        const [previousIncomeSnapshot, transactionSnapshot, previousDollarSnapshot] = await Promise.all([
           getDocs(collection(db, "distributions", previous.id, "incomes")),
           getDocs(collection(db, "distributions", previous.id, "transactions")),
+          getDocs(collection(db, "distributions", previous.id, "dollarTransactions")),
         ]);
-        incomeSnapshot.docs.forEach((item) => {
+        previousIncomeSnapshot.docs.forEach((item) => {
           const data = item.data() as PreviousIncome;
           categories.forEach((category) => { balances[category] += Number(data.totalBs ?? 0) * Number(data.percentages?.[category] ?? 0) / 100; });
         });
@@ -108,17 +127,39 @@ export default function Distribucion() {
           const data = item.data() as PreviousTransaction;
           if (data.category in balances) balances[data.category] += Number(data.incomeBs ?? 0) - Number(data.expenseBs ?? 0);
         });
+        previousDollarSnapshot.docs.forEach((item) => {
+          const data = item.data() as PreviousDollarTransaction;
+          if (data.category in dollarBalances) dollarBalances[data.category] += Number(data.incomeUsd ?? 0) - Number(data.expenseUsd ?? 0);
+        });
       }
 
-      const batch = writeBatch(db);
-      batch.set(doc(db, "distributions", currentDistribution.id), { sourceDistributionId: previous?.id ?? null, rolloverCheckedAt: serverTimestamp() }, { merge: true });
-      categories.forEach((category) => {
-        const amount = Math.round(Math.max(0, balances[category]) * 100) / 100;
-        if (amount <= 0) return;
-        const incomeRef = doc(db, "distributions", currentDistribution.id, "incomes", `rollover-${encodeURIComponent(category)}`);
-        batch.set(incomeRef, { description: `Restante del mes anterior: ${category}`, totalBs: amount, percentages: Object.fromEntries(categories.map((item) => [item, item === category ? 100 : 0])), isRollover: true, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
-      });
-      await batch.commit();
+      if (currentData.rolloverChecked !== true) {
+        const batch = writeBatch(db);
+        batch.set(currentRef, { sourceDistributionId: previous?.id ?? null, rolloverChecked: true, rolloverCheckedAt: serverTimestamp() }, { merge: true });
+        if (!hasBsRollover) {
+          categories.forEach((category) => {
+            const amount = Math.round(Math.max(0, balances[category]) * 100) / 100;
+            if (amount <= 0) return;
+            const incomeRef = doc(db, "distributions", currentDistribution.id, "incomes", `rollover-${encodeURIComponent(category)}`);
+            batch.set(incomeRef, { description: `Restante del mes anterior: ${category}`, totalBs: amount, percentages: Object.fromEntries(categories.map((item) => [item, item === category ? 100 : 0])), isRollover: true, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+          });
+        }
+        await batch.commit();
+      }
+
+      if (currentData.dollarRolloverChecked !== true && (previous || hasDollarRollover)) {
+        const dollarBatch = writeBatch(db);
+        dollarBatch.set(currentRef, { sourceDollarDistributionId: previous?.id ?? null, dollarRolloverChecked: true, dollarRolloverCheckedAt: serverTimestamp() }, { merge: true });
+        if (!hasDollarRollover) {
+          dollarCategories.forEach((category) => {
+            const amount = Math.round(Math.max(0, dollarBalances[category]) * 100) / 100;
+            if (amount <= 0) return;
+            const transactionRef = doc(db, "distributions", currentDistribution.id, "dollarTransactions", `rollover-${encodeURIComponent(category)}`);
+            dollarBatch.set(transactionRef, { category, date: `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-01`, description: `Restante del mes anterior: ${category}`, incomeUsd: amount, expenseUsd: 0, isRollover: true, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+          });
+        }
+        await dollarBatch.commit();
+      }
     } catch {
       setErrorMsg("No se pudo preparar automáticamente la distribución del mes.");
     } finally {

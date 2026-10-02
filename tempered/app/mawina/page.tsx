@@ -1,5 +1,5 @@
-import MawinaManager from "../components/mawina-manager";
+import MawinaPreview from "../components/mawina-preview";
 
 export default function MawinaPage() {
-  return <MawinaManager />;
+  return <MawinaPreview />;
 }

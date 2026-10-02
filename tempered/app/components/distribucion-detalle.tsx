@@ -26,6 +26,7 @@ const categories = [
 ];
 
 type Percentages = Record<string, number>;
+type PercentageInputs = Record<string, string>;
 type Income = {
   id: string;
   description: string;
@@ -36,6 +37,8 @@ type Props = { distributionId: string };
 
 const emptyPercentages = (): Percentages =>
   Object.fromEntries(categories.map((category) => [category, 0]));
+const emptyPercentageInputs = (): PercentageInputs =>
+  Object.fromEntries(categories.map((category) => [category, ""]));
 
 export default function DistribucionDetalle({ distributionId }: Props) {
   const { userId: currentUserId } = useSession();
@@ -43,7 +46,7 @@ export default function DistribucionDetalle({ distributionId }: Props) {
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [description, setDescription] = useState("");
   const [totalBs, setTotalBs] = useState("");
-  const [percentages, setPercentages] = useState<Percentages>(emptyPercentages);
+  const [percentageInputs, setPercentageInputs] = useState<PercentageInputs>(emptyPercentageInputs);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -86,25 +89,23 @@ export default function DistribucionDetalle({ distributionId }: Props) {
     [incomes],
   );
 
-  const percentageTotal = useMemo(
-    () => Object.values(percentages).reduce((sum, value) => sum + value, 0),
-    [percentages],
-  );
+  const percentages = Object.fromEntries(categories.map((category) => [category, Number(percentageInputs[category]) || 0])) as Percentages;
+  const percentageTotal = Object.values(percentages).reduce((sum, value) => sum + value, 0);
 
-  const percentagesAreComplete = Math.abs(percentageTotal - 100) < 0.0001;
+  const percentagesAreComplete = Math.abs(percentageTotal - 100) < 0.0001
+    && Object.values(percentageInputs).every((value) => value === "" || (Number(value) >= 0 && Number(value) <= 100));
 
   const resetForm = () => {
     setDescription("");
     setTotalBs("");
-    setPercentages(emptyPercentages());
+    setPercentageInputs(emptyPercentageInputs());
     setEditingId(null);
   };
 
   const updatePercentage = (category: string, value: string) => {
-    const parsed = Number(value);
-    setPercentages((current) => ({
+    setPercentageInputs((current) => ({
       ...current,
-      [category]: Math.max(0, Math.min(100, Number.isFinite(parsed) ? parsed : 0)),
+      [category]: value,
     }));
   };
 
@@ -151,7 +152,7 @@ export default function DistribucionDetalle({ distributionId }: Props) {
     setEditingId(income.id);
     setDescription(income.description);
     setTotalBs(String(income.totalBs));
-    setPercentages({ ...emptyPercentages(), ...income.percentages });
+    setPercentageInputs(Object.fromEntries(categories.map((category) => [category, String(income.percentages[category] ?? 0)])));
     setPendingDeleteId(null);
   };
 
@@ -207,7 +208,7 @@ export default function DistribucionDetalle({ distributionId }: Props) {
               {categories.map((category) => (
                 <label key={category} className="flex items-center justify-between gap-3 text-sm text-white/80">
                   <span>{category}</span>
-                  <span className="relative w-28"><input type="number" min="0" max="100" step="0.01" value={percentages[category]} onChange={(event) => updatePercentage(category, event.target.value)} className="w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-2 pr-8 text-right text-white outline-none" /><span className="absolute right-3 top-2 text-white/50">%</span></span>
+                  <span className="relative w-28"><input type="number" min="0" max="100" step="0.01" placeholder="0" value={percentageInputs[category]} onChange={(event) => updatePercentage(category, event.target.value)} className="w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-2 pr-8 text-right text-white outline-none placeholder:text-white/40" /><span className="absolute right-3 top-2 text-white/50">%</span></span>
                 </label>
               ))}
             </div>
