@@ -2,6 +2,7 @@ import Link from "next/link";
 
 const financialApps = [
   { href: "/summary", label: "Resumen" },
+  { href: "/isorropia/metricas", label: "Métricas financieras" },
   { href: "/distribucion", label: "Distribuciones" },
   { href: "/balance-bs", label: "Balance Bs" },
   { href: "/balance-dolares", label: "Balance $" },
