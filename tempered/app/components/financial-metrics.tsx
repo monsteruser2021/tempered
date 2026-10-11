@@ -17,10 +17,10 @@ const bsCategories = [
 ];
 
 type Distribution = { id: string; month: number; year: number };
-type Debt = { type: "receivable" | "payable"; amount: number; currency: "Bs" | "$"; dueDate: string; paid: boolean };
+type Debt = { type: "receivable" | "payable"; amount: number; paidAmount: number; currency: "Bs" | "$"; dueDate: string; paid: boolean };
 type Income = { description: string; totalBs: number; percentages: Record<string, number>; isRollover: boolean };
-type BsTransaction = { category: string; date: string; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isCurrencyExchange: boolean; exchangeRate: number; transferId: string; sourceSaleId: string };
-type DollarTransaction = { category: string; date: string; description: string; incomeUsd: number; expenseUsd: number; isCurrencyExchange: boolean; isRollover: boolean; exchangeRate: number; transferId: string; sourceSaleId: string };
+type BsTransaction = { category: string; date: string; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isCurrencyExchange: boolean; isDebtCollection: boolean; exchangeRate: number; transferId: string; sourceSaleId: string };
+type DollarTransaction = { category: string; date: string; description: string; incomeUsd: number; expenseUsd: number; isCurrencyExchange: boolean; isRollover: boolean; isDebtCollection: boolean; exchangeRate: number; transferId: string; sourceSaleId: string };
 type PeriodData = { incomes: Income[]; bsTransactions: BsTransaction[]; dollarTransactions: DollarTransaction[] };
 type CurrencyTotals = { capitalRecovered: number; realizedGain: number };
 type DebtAmounts = Record<"Bs" | "$", number>;
@@ -42,8 +42,8 @@ function getMonthlyTotals(data: PeriodData | undefined) {
     .filter((item) => !item.isRollover)
     .reduce((sum, item) => sum + item.totalBs, 0);
   const dollarTransferIds = new Set(data.dollarTransactions.map((item) => item.transferId).filter(Boolean));
-  const externalTransactions = data.bsTransactions.filter((item) => !item.isTransfer && !item.isCurrencyExchange && item.category !== "Inversión" && !item.sourceSaleId && !(item.transferId && dollarTransferIds.has(item.transferId)));
-  const dollarTransactions = data.dollarTransactions.filter((item) => !item.isRollover && !item.isCurrencyExchange && item.category !== "Inversiones" && !item.transferId && !item.sourceSaleId);
+  const externalTransactions = data.bsTransactions.filter((item) => !item.isTransfer && !item.isCurrencyExchange && !item.isDebtCollection && item.category !== "Inversión" && !item.sourceSaleId && !(item.transferId && dollarTransferIds.has(item.transferId)));
+  const dollarTransactions = data.dollarTransactions.filter((item) => !item.isRollover && !item.isCurrencyExchange && !item.isDebtCollection && item.category !== "Inversiones" && !item.transferId && !item.sourceSaleId);
   return {
     income: incomeFromDistribution + externalTransactions.reduce((sum, item) => sum + item.incomeBs, 0),
     expenses: externalTransactions.reduce((sum, item) => sum + item.expenseBs, 0),
@@ -116,6 +116,7 @@ export default function FinancialMetrics() {
           return {
             type: data.type === "payable" ? "payable" : "receivable",
             amount: Number(data.amount ?? 0),
+            paidAmount: typeof data.paidAmount === "number" ? Number(data.paidAmount) : data.paid === true ? Number(data.amount ?? 0) : 0,
             currency: data.currency === "$" ? "$" : "Bs",
             dueDate: String(data.dueDate ?? ""),
             paid: data.paid === true,
@@ -150,6 +151,7 @@ export default function FinancialMetrics() {
           incomeUsd: Number(item.data().incomeUsd ?? 0),
           expenseUsd: Number(item.data().expenseUsd ?? 0),
           isCurrencyExchange: item.data().isCurrencyExchange === true,
+          isDebtCollection: item.data().isDebtCollection === true || item.data().debtMovementType === "collection",
           isRollover: item.data().isRollover === true,
           exchangeRate: Number(item.data().exchangeRate ?? 0),
           transferId: String(item.data().transferId ?? ""),
@@ -166,6 +168,7 @@ export default function FinancialMetrics() {
           expenseBs: Number(item.data().expenseBs ?? 0),
           isTransfer: item.data().isTransfer === true || Boolean(item.data().transferId),
           isCurrencyExchange: item.data().isCurrencyExchange === true,
+          isDebtCollection: item.data().isDebtCollection === true || item.data().debtMovementType === "collection",
           exchangeRate: Number(item.data().exchangeRate ?? 0),
           transferId: String(item.data().transferId ?? ""),
           sourceSaleId: String(item.data().sourceSaleId ?? ""),
@@ -194,7 +197,7 @@ export default function FinancialMetrics() {
     if (!selectedDistribution) return emptyDebtTotals();
     const monthPrefix = `${selectedDistribution.year}-${String(selectedDistribution.month + 1).padStart(2, "0")}`;
     return debts.reduce<DebtTotals>((totals, debt) => {
-      if (!debt.paid && debt.dueDate.startsWith(`${monthPrefix}-`)) totals[debt.type][debt.currency] += debt.amount;
+      if (!debt.paid && debt.dueDate.startsWith(`${monthPrefix}-`)) totals[debt.type][debt.currency] += Math.max(0, debt.amount - debt.paidAmount);
       return totals;
     }, emptyDebtTotals());
   }, [debts, selectedDistribution]);

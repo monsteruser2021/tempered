@@ -26,7 +26,7 @@ const monthNames = [
 ];
 
 type Distribution = { id: string; month: number; year: number };
-type Transaction = { id: string; category: string; date: string; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean };
+type Transaction = { id: string; category: string; date: string; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isDebtMovement: boolean };
 type Income = { id: string; description: string; totalBs: number; percentages: Record<string, number> };
 
 const isTransferRecord = (data: Record<string, unknown>) => data.isTransfer === true || Boolean(data.transferId) || /^(Transf\. a|Prov\. de)/i.test(String(data.description ?? ""));
@@ -58,7 +58,7 @@ export default function BalanceBs() {
   useEffect(() => {
     if (!selectedId) return;
     const stopIncomes = onSnapshot(collection(db, "distributions", selectedId, "incomes"), (snapshot) => setIncomes(snapshot.docs.map((item) => ({ id: item.id, description: String(item.data().description ?? ""), totalBs: Number(item.data().totalBs ?? 0), percentages: (item.data().percentages ?? {}) as Record<string, number> }))), () => setErrorMsg("No se pudieron cargar los ingresos distribuidos."));
-    const stopTransactions = onSnapshot(collection(db, "distributions", selectedId, "transactions"), (snapshot) => setTransactions(snapshot.docs.map((item) => ({ id: item.id, category: String(item.data().category ?? ""), date: String(item.data().date ?? ""), description: String(item.data().description ?? ""), incomeBs: Number(item.data().incomeBs ?? 0), expenseBs: Number(item.data().expenseBs ?? 0), isTransfer: isTransferRecord(item.data()) }))), () => setErrorMsg("No se pudieron cargar las transacciones."));
+    const stopTransactions = onSnapshot(collection(db, "distributions", selectedId, "transactions"), (snapshot) => setTransactions(snapshot.docs.map((item) => ({ id: item.id, category: String(item.data().category ?? ""), date: String(item.data().date ?? ""), description: String(item.data().description ?? ""), incomeBs: Number(item.data().incomeBs ?? 0), expenseBs: Number(item.data().expenseBs ?? 0), isTransfer: isTransferRecord(item.data()), isDebtMovement: item.data().isDebtPayment === true || item.data().isDebtCollection === true || item.data().debtMovementType === "payment" || item.data().debtMovementType === "collection" }))), () => setErrorMsg("No se pudieron cargar las transacciones."));
     return () => { stopIncomes(); stopTransactions(); };
   }, [selectedId]);
 
@@ -69,7 +69,7 @@ export default function BalanceBs() {
   const initialTransactions = useMemo<Transaction[]>(() => incomes.flatMap((income) => {
     const percentage = Number(income.percentages[activeCategory] ?? 0);
     const amount = income.totalBs * percentage / 100;
-    return amount > 0 ? [{ id: `initial-${income.id}`, category: activeCategory, date: monthStart, description: `${income.description} (${percentage}%)`, incomeBs: amount, expenseBs: 0, isTransfer: false }] : [];
+    return amount > 0 ? [{ id: `initial-${income.id}`, category: activeCategory, date: monthStart, description: `${income.description} (${percentage}%)`, incomeBs: amount, expenseBs: 0, isTransfer: false, isDebtMovement: false }] : [];
   }), [activeCategory, incomes, monthStart]);
   const visibleTransactions = [...initialTransactions, ...transactions.filter((item) => item.category === activeCategory)];
   const remaining = visibleTransactions.reduce((sum, item) => sum + item.incomeBs - item.expenseBs, 0);
@@ -90,10 +90,18 @@ export default function BalanceBs() {
       resetForm(); setErrorMsg("");
     } catch { setErrorMsg("No se pudo guardar la transacción."); }
   };
-  const editTransaction = (item: Transaction) => { setEditingId(item.id); setDate(item.date); setDescription(item.description); setIncomeBs(String(item.incomeBs || "")); setExpenseBs(String(item.expenseBs || "")); setPendingDeleteId(null); };
+  const editTransaction = (item: Transaction) => {
+    if (item.isDebtMovement) { setErrorMsg("Los movimientos de deuda se administran desde el módulo de deudas."); return; }
+    setEditingId(item.id); setDate(item.date); setDescription(item.description); setIncomeBs(String(item.incomeBs || "")); setExpenseBs(String(item.expenseBs || "")); setPendingDeleteId(null);
+  };
   const deleteTransaction = async (id: string) => {
     if (pendingDeleteId !== id) { setPendingDeleteId(id); return; }
     const transaction = transactions.find((item) => item.id === id);
+    if (transaction?.isDebtMovement) {
+      setPendingDeleteId(null);
+      setErrorMsg("Los movimientos de deuda se administran desde el módulo de deudas.");
+      return;
+    }
     if (transaction?.isTransfer) {
       setPendingDeleteId(null);
       setErrorMsg("Las transferencias no se pueden eliminar desde el balance.");
@@ -132,6 +140,8 @@ export default function BalanceBs() {
                 </div>
                 {item.id.startsWith("initial-") ? (
                   <p className="mt-3 text-xs text-white/40">Ingreso inicial</p>
+                ) : item.isDebtMovement ? (
+                  <p className="mt-3 text-xs text-white/40">Movimiento de deuda vinculado</p>
                 ) : item.isTransfer ? (
                   <p className="mt-3 text-xs text-white/40">Transferencia protegida</p>
                 ) : (
@@ -150,7 +160,7 @@ export default function BalanceBs() {
           <div className="mt-6 hidden overflow-x-auto rounded-2xl border border-white/15 bg-black/15 md:block">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-white/15 text-xs uppercase text-white/55"><tr><th className="p-4">Fecha</th><th className="p-4">Descripción</th><th className="p-4">Ingreso</th><th className="p-4">Egreso</th><th className="p-4">Saldo</th><th className="p-4">Acciones</th></tr></thead>
-              <tbody>{visibleTransactions.map((item) => <tr key={item.id} className="border-b border-white/10"><td className="p-4">{item.date || "Inicial"}</td><td className="p-4">{item.description}</td><td className="p-4 text-emerald-300">{item.incomeBs.toFixed(2)} Bs</td><td className="p-4 text-red-300">{item.expenseBs.toFixed(2)} Bs</td><td className={item.incomeBs - item.expenseBs >= 0 ? "p-4 text-emerald-300" : "p-4 text-red-300"}>{(item.incomeBs - item.expenseBs).toFixed(2)} Bs</td><td className="p-4">{item.id.startsWith("initial-") ? <span className="text-xs text-white/40">Ingreso inicial</span> : item.isTransfer ? <span className="text-xs text-white/40">Transferencia protegida</span> : <span className="flex gap-2"><button type="button" onClick={() => editTransaction(item)} className="rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</span>}</td></tr>)}</tbody>
+              <tbody>{visibleTransactions.map((item) => <tr key={item.id} className="border-b border-white/10"><td className="p-4">{item.date || "Inicial"}</td><td className="p-4">{item.description}</td><td className="p-4 text-emerald-300">{item.incomeBs.toFixed(2)} Bs</td><td className="p-4 text-red-300">{item.expenseBs.toFixed(2)} Bs</td><td className={item.incomeBs - item.expenseBs >= 0 ? "p-4 text-emerald-300" : "p-4 text-red-300"}>{(item.incomeBs - item.expenseBs).toFixed(2)} Bs</td><td className="p-4">{item.id.startsWith("initial-") ? <span className="text-xs text-white/40">Ingreso inicial</span> : item.isDebtMovement ? <span className="text-xs text-white/40">Movimiento de deuda vinculado</span> : item.isTransfer ? <span className="text-xs text-white/40">Transferencia protegida</span> : <span className="flex gap-2"><button type="button" onClick={() => editTransaction(item)} className="rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</span>}</td></tr>)}</tbody>
             </table>
           </div>
         </>}

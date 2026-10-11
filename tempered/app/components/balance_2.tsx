@@ -35,6 +35,7 @@ type DollarTransaction = {
   incomeUsd: number;
   expenseUsd: number;
   isTransfer: boolean;
+  isDebtMovement: boolean;
 };
 
   const isTransferRecord = (data: Record<string, unknown>) => data.isTransfer === true || Boolean(data.transferId) || /^(Transf\. a|Prov\. de)/i.test(String(data.description ?? ""));
@@ -80,6 +81,7 @@ export default function BalanceDolares() {
         incomeUsd: Number(item.data().incomeUsd ?? 0),
         expenseUsd: Number(item.data().expenseUsd ?? 0),
         isTransfer: isTransferRecord(item.data()),
+        isDebtMovement: item.data().isDebtPayment === true || item.data().isDebtCollection === true || item.data().debtMovementType === "payment" || item.data().debtMovementType === "collection",
       }))),
       () => setErrorMsg("No se pudieron cargar las transacciones en dólares."),
     );
@@ -131,6 +133,10 @@ export default function BalanceDolares() {
   };
 
   const editTransaction = (transaction: DollarTransaction) => {
+    if (transaction.isDebtMovement) {
+      setErrorMsg("Los movimientos de deuda se administran desde el módulo de deudas.");
+      return;
+    }
     setEditingId(transaction.id);
     setDate(transaction.date);
     setDescription(transaction.description);
@@ -145,6 +151,11 @@ export default function BalanceDolares() {
       return;
     }
     const transaction = transactions.find((item) => item.id === id);
+    if (transaction?.isDebtMovement) {
+      setPendingDeleteId(null);
+      setErrorMsg("Los movimientos de deuda se administran desde el módulo de deudas.");
+      return;
+    }
     if (transaction?.isTransfer) {
       setPendingDeleteId(null);
       setErrorMsg("Los movimientos vinculados no se pueden eliminar por separado.");
@@ -198,11 +209,11 @@ export default function BalanceDolares() {
           </form>
 
           <div className="mt-6 space-y-3 md:hidden">
-            {categoryTransactions.length === 0 ? <p className="rounded-2xl border border-dashed border-white/25 p-8 text-center text-sm text-white/55">No hay transacciones en esta categoría.</p> : categoryTransactions.map((item) => <article key={item.id} className="rounded-2xl border border-white/15 bg-black/15 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm text-white">{item.description}</p><p className="mt-1 text-xs text-white/55">{item.date}</p></div><p className={item.incomeUsd - item.expenseUsd >= 0 ? "text-sm text-emerald-300" : "text-sm text-red-300"}>${(item.incomeUsd - item.expenseUsd).toFixed(2)}</p></div><div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/10 pt-3 text-xs"><p className="text-emerald-300">Ingreso: ${item.incomeUsd.toFixed(2)}</p><p className="text-right text-red-300">Egreso: ${item.expenseUsd.toFixed(2)}</p></div>{item.isTransfer ? <p className="mt-3 text-xs text-white/40">Transferencia protegida</p> : <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => editTransaction(item)} className="min-h-10 rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="min-h-10 rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="min-h-10 rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</div>}</article>)}
+            {categoryTransactions.length === 0 ? <p className="rounded-2xl border border-dashed border-white/25 p-8 text-center text-sm text-white/55">No hay transacciones en esta categoría.</p> : categoryTransactions.map((item) => <article key={item.id} className="rounded-2xl border border-white/15 bg-black/15 p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm text-white">{item.description}</p><p className="mt-1 text-xs text-white/55">{item.date}</p></div><p className={item.incomeUsd - item.expenseUsd >= 0 ? "text-sm text-emerald-300" : "text-sm text-red-300"}>${(item.incomeUsd - item.expenseUsd).toFixed(2)}</p></div><div className="mt-4 grid grid-cols-2 gap-3 border-t border-white/10 pt-3 text-xs"><p className="text-emerald-300">Ingreso: ${item.incomeUsd.toFixed(2)}</p><p className="text-right text-red-300">Egreso: ${item.expenseUsd.toFixed(2)}</p></div>{item.isDebtMovement ? <p className="mt-3 text-xs text-white/40">Movimiento de deuda vinculado</p> : item.isTransfer ? <p className="mt-3 text-xs text-white/40">Transferencia protegida</p> : <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => editTransaction(item)} className="min-h-10 rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="min-h-10 rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="min-h-10 rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</div>}</article>)}
           </div>
 
           <div className="mt-6 hidden overflow-x-auto rounded-2xl border border-white/15 bg-black/15 md:block">
-            <table className="w-full text-left text-sm"><thead className="border-b border-white/15 text-xs uppercase text-white/55"><tr><th className="p-4">Fecha</th><th className="p-4">Descripción</th><th className="p-4">Ingreso $</th><th className="p-4">Egreso $</th><th className="p-4">Saldo</th><th className="p-4">Acciones</th></tr></thead><tbody>{categoryTransactions.map((item) => <tr key={item.id} className="border-b border-white/10"><td className="p-4">{item.date}</td><td className="p-4">{item.description}</td><td className="p-4 text-emerald-300">${item.incomeUsd.toFixed(2)}</td><td className="p-4 text-red-300">${item.expenseUsd.toFixed(2)}</td><td className={item.incomeUsd - item.expenseUsd >= 0 ? "p-4 text-emerald-300" : "p-4 text-red-300"}>${(item.incomeUsd - item.expenseUsd).toFixed(2)}</td><td className="p-4">{item.isTransfer ? <span className="text-xs text-white/40">Transferencia protegida</span> : <span className="flex gap-2"><button type="button" onClick={() => editTransaction(item)} className="rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</span>}</td></tr>)}</tbody></table>
+            <table className="w-full text-left text-sm"><thead className="border-b border-white/15 text-xs uppercase text-white/55"><tr><th className="p-4">Fecha</th><th className="p-4">Descripción</th><th className="p-4">Ingreso $</th><th className="p-4">Egreso $</th><th className="p-4">Saldo</th><th className="p-4">Acciones</th></tr></thead><tbody>{categoryTransactions.map((item) => <tr key={item.id} className="border-b border-white/10"><td className="p-4">{item.date}</td><td className="p-4">{item.description}</td><td className="p-4 text-emerald-300">${item.incomeUsd.toFixed(2)}</td><td className="p-4 text-red-300">${item.expenseUsd.toFixed(2)}</td><td className={item.incomeUsd - item.expenseUsd >= 0 ? "p-4 text-emerald-300" : "p-4 text-red-300"}>${(item.incomeUsd - item.expenseUsd).toFixed(2)}</td><td className="p-4">{item.isDebtMovement ? <span className="text-xs text-white/40">Movimiento de deuda vinculado</span> : item.isTransfer ? <span className="text-xs text-white/40">Transferencia protegida</span> : <span className="flex gap-2"><button type="button" onClick={() => editTransaction(item)} className="rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</span>}</td></tr>)}</tbody></table>
           </div>
         </>}
       </section>
