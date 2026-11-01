@@ -53,19 +53,20 @@ export default function DistribucionDetalle({ distributionId }: Props) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!currentUserId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "") return;
+    const userId = currentUserId.trim();
 
     return onSnapshot(
       doc(db, "distributions", distributionId),
       (snapshot) => {
-        setIsOwner(snapshot.exists() && snapshot.data().userId === currentUserId);
+        setIsOwner(snapshot.exists() && snapshot.data().userId === userId);
       },
       () => setErrorMsg("No se pudo cargar la distribución."),
     );
   }, [currentUserId, distributionId]);
 
   useEffect(() => {
-    if (!isOwner) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !isOwner) return;
 
     return onSnapshot(
       collection(db, "distributions", distributionId, "incomes"),
@@ -82,7 +83,7 @@ export default function DistribucionDetalle({ distributionId }: Props) {
       },
       () => setErrorMsg("No se pudieron cargar los ingresos."),
     );
-  }, [distributionId, isOwner]);
+  }, [currentUserId, distributionId, isOwner]);
 
   const totalIncome = useMemo(
     () => incomes.reduce((sum, income) => sum + income.totalBs, 0),

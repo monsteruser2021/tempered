@@ -47,8 +47,9 @@ export default function BalanceBs() {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    if (!currentUserId) return;
-    return onSnapshot(query(collection(db, "distributions"), where("userId", "==", currentUserId)), (snapshot) => {
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "") return;
+    const userId = currentUserId.trim();
+    return onSnapshot(query(collection(db, "distributions"), where("userId", "==", userId)), (snapshot) => {
       const next = snapshot.docs.map((item) => ({ id: item.id, month: Number(item.data().month), year: Number(item.data().year) })).sort((a, b) => b.year - a.year || b.month - a.month);
       setDistributions(next);
       setSelectedId((current) => current && next.some((item) => item.id === current) ? current : next[0]?.id ?? "");
@@ -56,11 +57,11 @@ export default function BalanceBs() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !selectedId) return;
     const stopIncomes = onSnapshot(collection(db, "distributions", selectedId, "incomes"), (snapshot) => setIncomes(snapshot.docs.map((item) => ({ id: item.id, description: String(item.data().description ?? ""), totalBs: Number(item.data().totalBs ?? 0), percentages: (item.data().percentages ?? {}) as Record<string, number> }))), () => setErrorMsg("No se pudieron cargar los ingresos distribuidos."));
     const stopTransactions = onSnapshot(collection(db, "distributions", selectedId, "transactions"), (snapshot) => setTransactions(snapshot.docs.map((item) => ({ id: item.id, category: String(item.data().category ?? ""), date: String(item.data().date ?? ""), description: String(item.data().description ?? ""), incomeBs: Number(item.data().incomeBs ?? 0), expenseBs: Number(item.data().expenseBs ?? 0), isTransfer: isTransferRecord(item.data()), isDebtMovement: item.data().isDebtPayment === true || item.data().isDebtCollection === true || item.data().debtMovementType === "payment" || item.data().debtMovementType === "collection" }))), () => setErrorMsg("No se pudieron cargar las transacciones."));
     return () => { stopIncomes(); stopTransactions(); };
-  }, [selectedId]);
+  }, [currentUserId, selectedId]);
 
   const selectedDistribution = distributions.find((item) => item.id === selectedId);
   const monthStart = selectedDistribution ? `${selectedDistribution.year}-${String(selectedDistribution.month + 1).padStart(2, "0")}-01` : "";

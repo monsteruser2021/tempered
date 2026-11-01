@@ -75,7 +75,11 @@ async function saveDebtAndPayment(userId: string, debtId: string | null, input: 
   let currentDistributionId: string | undefined;
 
   if (paymentOverride !== undefined || input.paid) {
-    const distributions = await getDocs(query(collection(db, "distributions"), where("userId", "==", userId)));
+    if (typeof userId !== "string" || userId.trim() === "") {
+      throw new Error("Debes iniciar sesión para registrar el pago.");
+    }
+    const ownerId = userId.trim();
+    const distributions = await getDocs(query(collection(db, "distributions"), where("userId", "==", ownerId)));
     const currentDistributions = distributions.docs.filter((item) => {
       const data = item.data();
       return Number(data.month) === month - 1 && Number(data.year) === year;
@@ -233,14 +237,15 @@ export default function DebtsManager() {
   const today = localDateString();
 
   useEffect(() => {
-    if (!userId) return;
+    if (typeof userId !== "string" || userId.trim() === "") return;
+    const ownerId = userId.trim();
     return onSnapshot(
-      query(collection(db, "debts"), where("userId", "==", userId)),
+      query(collection(db, "debts"), where("userId", "==", ownerId)),
       (snapshot) => setDebts(snapshot.docs.map((item) => {
         const data = item.data();
         return {
           id: item.id,
-          userId,
+          userId: ownerId,
           title: String(data.title ?? ""),
           type: data.type === "payable" ? "payable" : "receivable",
           amount: Number(data.amount ?? 0),

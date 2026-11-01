@@ -90,9 +90,10 @@ export default function FinancialMetrics() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!userId) return;
+    if (typeof userId !== "string" || userId.trim() === "") return;
+    const ownerId = userId.trim();
     return onSnapshot(
-      query(collection(db, "distributions"), where("userId", "==", userId)),
+      query(collection(db, "distributions"), where("userId", "==", ownerId)),
       (snapshot) => {
         const next = snapshot.docs.map((item) => ({ id: item.id, month: Number(item.data().month), year: Number(item.data().year) }))
           .sort((first, second) => second.year - first.year || second.month - first.month);
@@ -107,9 +108,10 @@ export default function FinancialMetrics() {
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (typeof userId !== "string" || userId.trim() === "") return;
+    const ownerId = userId.trim();
     return onSnapshot(
-      query(collection(db, "debts"), where("userId", "==", userId)),
+      query(collection(db, "debts"), where("userId", "==", ownerId)),
       (snapshot) => {
         setDebts(snapshot.docs.map((item) => {
           const data = item.data();
@@ -132,7 +134,7 @@ export default function FinancialMetrics() {
   const previousDistribution = getPreviousPeriod(selectedDistribution, distributions);
 
   useEffect(() => {
-    if (!distributions.length) return;
+    if (typeof userId !== "string" || userId.trim() === "" || !distributions.length) return;
     const detailedIds = new Set([selectedId, previousDistribution?.id].filter(Boolean));
     const unsubscribers: (() => void)[] = [];
 
@@ -187,7 +189,7 @@ export default function FinancialMetrics() {
     });
 
     return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
-  }, [distributions, previousDistribution?.id, selectedId]);
+  }, [distributions, previousDistribution?.id, selectedId, userId]);
 
   const selectedData = periodData[selectedId] ?? emptyPeriodData();
   const previousData = previousDistribution ? periodData[previousDistribution.id] : undefined;

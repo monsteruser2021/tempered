@@ -65,8 +65,9 @@ export default function Transfers() {
   const symbol = currency === "bs" ? "Bs" : "$";
 
   useEffect(() => {
-    if (!currentUserId) return;
-    return onSnapshot(query(collection(db, "distributions"), where("userId", "==", currentUserId)), (snapshot) => {
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "") return;
+    const userId = currentUserId.trim();
+    return onSnapshot(query(collection(db, "distributions"), where("userId", "==", userId)), (snapshot) => {
       const next = snapshot.docs.map((item) => ({ id: item.id, month: Number(item.data().month), year: Number(item.data().year) })).sort((a, b) => b.year - a.year || b.month - a.month);
       setDistributions(next);
       setDistributionId((current) => current && next.some((item) => item.id === current) ? current : next[0]?.id ?? "");
@@ -74,7 +75,7 @@ export default function Transfers() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!distributionId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !distributionId) return;
     const stopTransactions = onSnapshot(collection(db, "distributions", distributionId, transactionCollection), (snapshot) => {
       setTransactions(snapshot.docs.map((item) => ({ category: String(item.data().category ?? ""), income: Number(item.data()[incomeField] ?? 0), expense: Number(item.data()[expenseField] ?? 0) })));
     }, () => setErrorMsg("No se pudieron cargar los saldos."));
@@ -85,10 +86,10 @@ export default function Transfers() {
       setIncomes(snapshot.docs.map((item) => ({ total: Number(item.data().totalBs ?? 0), percentages: (item.data().percentages ?? {}) as Record<string, number> })));
     }, () => setErrorMsg("No se pudieron cargar los ingresos distribuidos."));
     return () => { stopTransactions(); stopIncomes(); };
-  }, [currency, distributionId, expenseField, incomeField, transactionCollection]);
+  }, [currentUserId, currency, distributionId, expenseField, incomeField, transactionCollection]);
 
   useEffect(() => {
-    if (!distributionId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !distributionId) return;
     const stopTransactions = onSnapshot(collection(db, "distributions", distributionId, "transactions"), (snapshot) => {
       setExchangeTransactions(snapshot.docs.map((item) => ({ category: String(item.data().category ?? ""), incomeBs: Number(item.data().incomeBs ?? 0), expenseBs: Number(item.data().expenseBs ?? 0) })));
     }, () => setErrorMsg("No se pudieron cargar los saldos en bolívares."));
@@ -96,10 +97,10 @@ export default function Transfers() {
       setExchangeIncomes(snapshot.docs.map((item) => ({ total: Number(item.data().totalBs ?? 0), percentages: (item.data().percentages ?? {}) as Record<string, number> })));
     }, () => setErrorMsg("No se pudieron cargar los ingresos distribuidos."));
     return () => { stopTransactions(); stopIncomes(); };
-  }, [distributionId]);
+  }, [currentUserId, distributionId]);
 
   useEffect(() => {
-    if (!distributionId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !distributionId) return;
     let bolivarRows: ExchangeRow[] = [];
     let dollarRows: ExchangeRow[] = [];
     const rebuildAudit = () => {
@@ -157,7 +158,7 @@ export default function Transfers() {
       rebuildAudit();
     }, () => setErrorMsg("No se pudo cargar la bitácora de divisas."));
     return () => { stopBolivarRows(); stopDollarRows(); };
-  }, [distributionId]);
+  }, [currentUserId, distributionId]);
 
   const balances = useMemo(() => categories.map((category) => {
     const manual = transactions.filter((item) => item.category === category).reduce((sum, item) => sum + item.income - item.expense, 0);

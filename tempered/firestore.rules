@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isModuleCollection(collectionName) {
+      return collectionName in [
+        'debts',
+        'distributions',
+        'balances',
+        'budgets',
+        'habitCompletions',
+        'habits',
+        'mawinaRoutines',
+        'mythicalInvestments',
+        'mythicalSales',
+        'isorropia',
+        'shoppingItems',
+        'tasks'
+      ];
+    }
+
+    function isOwner(data) {
+      return request.auth != null && data.userId == request.auth.uid;
+    }
+
+    function ownsDistribution(distributionId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/distributions/$(distributionId))
+        && get(/databases/$(database)/documents/distributions/$(distributionId)).data.userId == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/{moduleCollection}/{document=**} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == userId
+        && moduleCollection in ['distributions', 'balances', 'debts', 'budgets'];
+    }
+
+    match /{moduleCollection}/{documentId} {
+      allow read: if isModuleCollection(moduleCollection) && isOwner(resource.data);
+      allow create: if isModuleCollection(moduleCollection) && isOwner(request.resource.data);
+      allow update: if isModuleCollection(moduleCollection)
+        && isOwner(resource.data)
+        && isOwner(request.resource.data);
+      allow delete: if isModuleCollection(moduleCollection) && isOwner(resource.data);
+
+      match /{childCollection}/{childDocumentId} {
+        allow read, write: if moduleCollection == 'distributions'
+          && childCollection in [
+          'incomes',
+          'transactions',
+          'dollarTransactions'
+        ] && ownsDistribution(documentId);
+      }
+    }
+  }
+}

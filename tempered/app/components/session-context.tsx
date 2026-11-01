@@ -2,7 +2,7 @@
 
 import { onAuthStateChanged } from "firebase/auth";
 import { createContext, useContext, useEffect, useState } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 
 type SessionContextValue = {
@@ -13,6 +13,13 @@ type SessionContextValue = {
 
 const SessionContext = createContext<SessionContextValue>({ userId: null, authenticated: false, loading: true });
 
+function isPermissionDenied(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "permission-denied";
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
   const [firebaseAuthenticated, setFirebaseAuthenticated] = useState(false);
@@ -20,26 +27,46 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let active = true;
+    let authChangeId = 0;
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      const currentChangeId = ++authChangeId;
       setFirebaseAuthenticated(Boolean(user));
-      setLoading(false);
+      setLoading(true);
+      setUserId(null);
+
       if (!user) {
-        setUserId(null);
         document.cookie = "tempered_user_id=; Max-Age=0; path=/";
+        setLoading(false);
         return;
       }
 
-      void getDocs(query(collection(db, "users"), where("authUid", "==", user.uid)))
-        .then((snapshot) => {
-          if (!active) return;
-          const legacyUserId = snapshot.docs[0]?.id ?? user.uid;
-          setUserId(legacyUserId);
-          document.cookie = `tempered_user_id=${encodeURIComponent(legacyUserId)}; path=/; SameSite=Lax`;
-        })
-        .catch((error) => {
-          console.error("No se pudo resolver el usuario de Tempered:", error);
-          if (active) setUserId(null);
-        });
+      void (async () => {
+        try {
+          const userRef = doc(db, "users", user.uid);
+          const userSnapshot = await getDoc(userRef);
+          if (!userSnapshot.exists()) {
+            await setDoc(userRef, {
+              uid: user.uid,
+              authUid: user.uid,
+              email: user.email,
+              displayName: user.displayName,
+              createdAt: serverTimestamp(),
+            });
+          }
+        } catch (error) {
+          if (isPermissionDenied(error)) {
+            console.warn("No se pudo sincronizar el perfil por permisos; se continuará con la sesión autenticada.", error);
+          } else {
+            console.error("No se pudo sincronizar el perfil de Tempered:", error);
+          }
+        } finally {
+          if (active && currentChangeId === authChangeId) {
+            setUserId(user.uid);
+            document.cookie = `tempered_user_id=${encodeURIComponent(user.uid)}; path=/; SameSite=Lax`;
+            setLoading(false);
+          }
+        }
+      })();
     });
     return () => {
       active = false;

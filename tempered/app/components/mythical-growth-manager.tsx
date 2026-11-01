@@ -69,14 +69,15 @@ export default function MythicalGrowthManager() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!userId) return;
+    if (typeof userId !== "string" || userId.trim() === "") return;
+    const ownerId = userId.trim();
     return onSnapshot(
-      query(collection(db, "mythicalInvestments"), where("userId", "==", userId)),
+      query(collection(db, "mythicalInvestments"), where("userId", "==", ownerId)),
       (snapshot) => setInvestments(snapshot.docs.map((item) => {
         const data = item.data();
         return {
           id: item.id,
-          userId,
+          userId: ownerId,
           title: String(data.title ?? ""),
           category: String(data.category ?? "Otros"),
           currency: data.currency === "$" ? "$" : "Bs",

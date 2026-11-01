@@ -89,18 +89,20 @@ export default function MythicalGrowthInventory() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    if (!userId) return;
+    if (typeof userId !== "string" || userId.trim() === "") return;
+    const ownerId = userId.trim();
     return onSnapshot(
-      query(collection(db, "mythicalInvestments"), where("userId", "==", userId)),
-      (snapshot) => setInvestments(snapshot.docs.map((item) => mapInvestment(item.id, userId, item.data()))),
+      query(collection(db, "mythicalInvestments"), where("userId", "==", ownerId)),
+      (snapshot) => setInvestments(snapshot.docs.map((item) => mapInvestment(item.id, ownerId, item.data()))),
       () => setError("No se pudieron cargar los proyectos de Mythical Growth."),
     );
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (typeof userId !== "string" || userId.trim() === "") return;
+    const ownerId = userId.trim();
     return onSnapshot(
-      query(collection(db, "mythicalSales"), where("userId", "==", userId)),
+      query(collection(db, "mythicalSales"), where("userId", "==", ownerId)),
       (snapshot) => setSales(snapshot.docs.map((item) => {
         const data = item.data();
         return {

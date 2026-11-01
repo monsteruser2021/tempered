@@ -168,13 +168,22 @@ export default function Distribucion() {
   }, [currentMonth, currentPeriod, currentYear]);
 
   useEffect(() => {
-    if (!currentUserId) return;
-    const distributionsQuery = query(collection(db, "distributions"), where("userId", "==", currentUserId));
-    return onSnapshot(distributionsQuery, (snapshot) => {
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "") return;
+    const userId = currentUserId.trim();
+    const distributionsQuery = query(collection(db, "distributions"), where("userId", "==", userId));
+    const unsubscribe = onSnapshot(distributionsQuery, (snapshot) => {
       const available = snapshot.docs.map((item) => ({ id: item.id, name: String(item.data().name ?? "Distribución"), month: Number(item.data().month), year: Number(item.data().year), isAutomatic: item.data().isAutomatic === true })).sort((a, b) => periodValue(b.year, b.month) - periodValue(a.year, a.month));
       setDistributions(available);
-      void createRollover(available, currentUserId);
-    }, () => setErrorMsg("No se pudieron cargar las distribuciones."));
+      setErrorMsg("");
+      void createRollover(available, userId);
+    }, (error) => {
+      if (process.env.NODE_ENV !== "production") {
+        console.error("Error al cargar las distribuciones de Isorropia:", error.code, error.message);
+      }
+      setDistributions([]);
+      setErrorMsg("No se pudieron cargar las distribuciones.");
+    });
+    return () => unsubscribe();
   }, [createRollover, currentUserId]);
 
   const orderedDistributions = useMemo(() => [...distributions].sort((a, b) => periodValue(b.year, b.month) - periodValue(a.year, a.month)), [distributions]);

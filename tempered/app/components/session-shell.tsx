@@ -71,6 +71,16 @@ function SessionChrome({ children }: { children: React.ReactNode }) {
     if (!isLoginPage && !loading && !authenticated) router.replace("/");
   }, [authenticated, isLoginPage, loading, router]);
 
+  if (!isLoginPage && loading) {
+    return (
+      <div key={pathname} className={`theme-root page-enter ${theme}`}>
+        <main className="flex min-h-screen w-full items-center justify-center px-4 text-white">
+          <p role="status" aria-live="polite">Sincronizando sesión...</p>
+        </main>
+      </div>
+    );
+  }
+
   const handleLogout = async () => {
     try {
       await signOut(auth);

@@ -40,9 +40,10 @@ export default function Summary() {
   const symbol = currency === "bs" ? "Bs" : "$";
 
   useEffect(() => {
-    if (!currentUserId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "") return;
+    const userId = currentUserId.trim();
     return onSnapshot(
-      query(collection(db, "distributions"), where("userId", "==", currentUserId)),
+      query(collection(db, "distributions"), where("userId", "==", userId)),
       (snapshot) => {
         const next = snapshot.docs
           .map((item) => ({ id: item.id, month: Number(item.data().month), year: Number(item.data().year) }))
@@ -57,7 +58,7 @@ export default function Summary() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!distributionId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !distributionId) return;
     const dataKey = `${currency}:${distributionId}`;
 
     const stopTransactions = onSnapshot(
@@ -86,7 +87,7 @@ export default function Summary() {
       () => setErrorMsg("No se pudieron cargar los ingresos distribuidos."),
     );
     return () => { stopTransactions(); stopIncomes(); };
-  }, [currency, distributionId, expenseField, incomeField, transactionCollection]);
+  }, [currentUserId, currency, distributionId, expenseField, incomeField, transactionCollection]);
 
   const balances = useMemo(() => categories.map((category) => {
     const dataKey = `${currency}:${distributionId}`;

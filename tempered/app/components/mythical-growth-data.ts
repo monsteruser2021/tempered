@@ -33,8 +33,12 @@ function localDateString(date: Date) {
 }
 
 export async function registerMythicalSale({ userId, investmentId, quantity }: SaleInput): Promise<SaleResult> {
+  if (typeof userId !== "string" || userId.trim() === "") {
+    throw new Error("Debes iniciar sesión para registrar la venta.");
+  }
   if (!Number.isInteger(quantity) || quantity <= 0) throw new Error("La cantidad debe ser un entero positivo.");
 
+  const ownerId = userId.trim();
   const investmentRef = doc(db, "mythicalInvestments", investmentId);
   const saleRef = doc(collection(db, "mythicalSales"));
   const now = new Date();
@@ -43,12 +47,12 @@ export async function registerMythicalSale({ userId, investmentId, quantity }: S
   const year = now.getFullYear();
   const distributionsSnapshot = await getDocs(query(
     collection(db, "distributions"),
-    where("userId", "==", userId),
+    where("userId", "==", ownerId),
     where("month", "==", month),
     where("year", "==", year),
   ));
   const existingDistribution = distributionsSnapshot.docs[0];
-  const distributionId = existingDistribution?.id ?? `period-${encodeURIComponent(userId)}-${year}-${String(month + 1).padStart(2, "0")}`;
+  const distributionId = existingDistribution?.id ?? `period-${encodeURIComponent(ownerId)}-${year}-${String(month + 1).padStart(2, "0")}`;
   const distributionRef = doc(db, "distributions", distributionId);
 
   return runTransaction(db, async (transaction) => {
@@ -59,7 +63,7 @@ export async function registerMythicalSale({ userId, investmentId, quantity }: S
 
     if (!investmentSnapshot.exists()) throw new Error("El artículo ya no existe.");
     const investment = investmentSnapshot.data();
-    if (investment.userId !== userId || investment.status !== "process") {
+    if (investment.userId !== ownerId || investment.status !== "process") {
       throw new Error("El artículo no está disponible en el inventario activo.");
     }
 
@@ -84,7 +88,7 @@ export async function registerMythicalSale({ userId, investmentId, quantity }: S
     if (!distributionSnapshot.exists()) {
       transaction.set(distributionRef, {
         name: "Distribución",
-        userId,
+        userId: ownerId,
         month,
         year,
         isAutomatic: false,
@@ -120,7 +124,7 @@ export async function registerMythicalSale({ userId, investmentId, quantity }: S
       updatedAt: serverTimestamp(),
     });
     transaction.set(saleRef, {
-      userId,
+      userId: ownerId,
       investmentId,
       quantity,
       currency,

@@ -55,9 +55,10 @@ export default function BalanceDolares() {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    if (!currentUserId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "") return;
+    const userId = currentUserId.trim();
     return onSnapshot(
-      query(collection(db, "distributions"), where("userId", "==", currentUserId)),
+      query(collection(db, "distributions"), where("userId", "==", userId)),
       (snapshot) => {
         const next = snapshot.docs
           .map((item) => ({ id: item.id, month: Number(item.data().month), year: Number(item.data().year) }))
@@ -70,7 +71,7 @@ export default function BalanceDolares() {
   }, [currentUserId]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !selectedId) return;
     return onSnapshot(
       collection(db, "distributions", selectedId, "dollarTransactions"),
       (snapshot) => setTransactions(snapshot.docs.map((item) => ({
@@ -85,7 +86,7 @@ export default function BalanceDolares() {
       }))),
       () => setErrorMsg("No se pudieron cargar las transacciones en dólares."),
     );
-  }, [selectedId]);
+  }, [currentUserId, selectedId]);
 
   const selectedDistribution = distributions.find((item) => item.id === selectedId);
   const monthStart = selectedDistribution ? `${selectedDistribution.year}-${String(selectedDistribution.month + 1).padStart(2, "0")}-01` : "";
