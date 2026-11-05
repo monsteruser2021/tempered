@@ -30,6 +30,7 @@ function money(value: number, symbol: Currency) {
 export default function DebtsManager() {
   const { userId } = useSession();
   const [debts, setDebts] = useState<Debt[]>([]);
+  const [debtFilter, setDebtFilter] = useState<DebtType>("payable");
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DebtType>("receivable");
   const [amount, setAmount] = useState("");
@@ -72,8 +73,11 @@ export default function DebtsManager() {
     if (!debt.paid) result[debt.type][debt.currency] += Math.max(0, debt.amount - debt.paidAmount);
     return result;
   }, structuredClone(emptyTotals)), [debts]);
-  const pending = useMemo(() => debts.filter((debt) => !debt.paid).sort((a, b) => a.dueDate.localeCompare(b.dueDate)), [debts]);
-  const settled = useMemo(() => debts.filter((debt) => debt.paid), [debts]);
+  const filteredDebts = useMemo(() => debts.filter((debt) => debt.type === debtFilter), [debtFilter, debts]);
+  const pending = useMemo(() => filteredDebts.filter((debt) => !debt.paid).sort((a, b) => a.dueDate.localeCompare(b.dueDate)), [filteredDebts]);
+  const settled = useMemo(() => filteredDebts.filter((debt) => debt.paid), [filteredDebts]);
+  const payableCount = debts.filter((debt) => debt.type === "payable").length;
+  const receivableCount = debts.filter((debt) => debt.type === "receivable").length;
 
   const resetForm = () => {
     setTitle(""); setType("receivable"); setAmount(""); setCurrency("Bs");
@@ -215,9 +219,26 @@ export default function DebtsManager() {
     {!userId && <p className="mt-6 border border-[#ddab36]/35 bg-black/50 p-4 text-sm text-white/75">No se encontró una sesión activa de Tempered.</p>}
     {error && <p role="alert" className="mt-6 border border-red-300/50 bg-red-950/50 p-4 text-sm text-red-100">{error}</p>}
     {notice && <p role="status" aria-live="polite" className="mt-6 border border-emerald-300/40 bg-emerald-950/40 p-4 text-sm text-emerald-100">{notice}</p>}
+    <div className="mt-7 inline-flex w-full max-w-xl rounded-xl border border-[#ddab36]/30 bg-black/45 p-1" role="group" aria-label="Filtrar tipo de deuda">
+      {([
+        { value: "payable", label: "Deudas que debo", count: payableCount },
+        { value: "receivable", label: "Me deben", count: receivableCount },
+      ] as const).map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={debtFilter === option.value}
+          onClick={() => setDebtFilter(option.value)}
+          className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs uppercase transition-colors sm:text-sm ${debtFilter === option.value ? "bg-[#ddab36] font-bold text-[#121212]" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
+        >
+          <span>{option.label}</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] ${debtFilter === option.value ? "bg-black/15" : "bg-white/10"}`}>{option.count}</span>
+        </button>
+      ))}
+    </div>
     <section className="mt-8 grid gap-4 sm:grid-cols-2" aria-label="Resumen de deudas"><Kpi title="Total que me deben" totals={totals.receivable} /><Kpi title="Total que debo" totals={totals.payable} /></section>
     <form onSubmit={submit} className="mt-8 border border-[#ddab36]/35 bg-black/55 p-5 sm:p-7"><h2 className="text-lg uppercase text-[#ddab36]">{editingId ? "Editar deuda" : "Nueva deuda"}</h2><div className="mt-5 grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]"><label className="block text-xs uppercase text-white/65">Título / concepto<input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} disabled={!userId || saving} placeholder="Ej. Préstamo a Juan" className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-4 py-3 text-sm text-white outline-none focus:border-[#ddab36] disabled:opacity-50" /></label><label className="block text-xs uppercase text-white/65">Tipo<select value={type} onChange={(event) => setType(event.target.value as DebtType)} disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-3 py-3 text-sm text-white outline-none"><option value="receivable">Me deben</option><option value="payable">Debo</option></select></label></div><div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,1fr)_9rem_12rem]"><label className="block text-xs uppercase text-white/65">Monto<input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-4 py-3 text-sm text-white outline-none focus:border-[#ddab36] disabled:opacity-50" /></label><label className="block text-xs uppercase text-white/65">Moneda<select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)} disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-3 py-3 text-sm text-white outline-none"><option value="Bs">Bolívares - Bs</option><option value="$">Dólares - $</option></select></label><label className="block text-xs uppercase text-white/65">Fecha límite<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-4 py-3 text-sm text-white outline-none focus:border-[#ddab36] disabled:opacity-50" /></label></div><label className="mt-4 flex max-w-full items-center gap-3 text-xs uppercase text-white/70"><input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} disabled={!userId || saving} className="size-5 shrink-0 accent-[#ddab36]" /> Pagado / saldado</label><div className="mt-5 flex flex-wrap gap-3"><button type="submit" disabled={!userId || saving} className="min-h-11 rounded-lg bg-[#ddab36] px-5 py-3 text-xs font-bold uppercase text-[#121212] hover:bg-[#f0c55a] disabled:opacity-50">{saving ? "Guardando..." : editingId ? "Guardar cambios" : "Registrar deuda"}</button>{editingId && <button type="button" onClick={resetForm} disabled={saving} className="min-h-11 rounded-lg border border-[#ddab36]/45 px-5 py-3 text-xs uppercase text-[#ddab36]">Cancelar</button>}</div></form>
-    <DebtList title="Pendientes" debts={pending} empty="No hay deudas pendientes." renderDebt={renderDebt} /><DebtList title="Pagadas / saldadas" debts={settled} empty="Aún no hay deudas saldadas." renderDebt={renderDebt} />
+    <DebtList title={debtFilter === "payable" ? "Deudas que debo · Pendientes" : "Deudas que me deben · Pendientes"} debts={pending} empty={debtFilter === "payable" ? "No tienes deudas por pagar." : "No tienes deudas por cobrar."} renderDebt={renderDebt} /><DebtList title={debtFilter === "payable" ? "Deudas que debo · Pagadas" : "Deudas que me deben · Saldadas"} debts={settled} empty={debtFilter === "payable" ? "Aún no hay deudas pagadas." : "Aún no hay deudas cobradas."} renderDebt={renderDebt} />
   </main>;
 }
 

@@ -10,6 +10,7 @@ import {
   getPaidAmount,
   type Currency,
   type Debt,
+  type DebtType,
 } from "@/lib/debt-payments";
 import {
   executePlannedIncome,
@@ -95,6 +96,7 @@ export default function Planificador() {
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<Currency>("Bs");
+  const [debtFilter, setDebtFilter] = useState<DebtType>("payable");
   const [estimatedDate, setEstimatedDate] = useState(localDateString());
   const [assignments, setAssignments] = useState<PlannedAssignment[]>([]);
   const [expenseTitle, setExpenseTitle] = useState("");
@@ -164,19 +166,23 @@ export default function Planificador() {
   const availableDebts = useMemo(
     () => debts
       .filter((debt) => (
-        debt.currency === currency
+        debt.type === debtFilter
+        && debt.currency === currency
         && (!debt.paid || assignedDebtIds.includes(debt.id))
         && (!reservedDebtIds.has(debt.id) || assignedDebtIds.includes(debt.id))
       ))
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
-    [assignedDebtIds, currency, debts, reservedDebtIds],
+    [assignedDebtIds, currency, debtFilter, debts, reservedDebtIds],
   );
+  const payableDebtCount = debts.filter((debt) => debt.type === "payable" && debt.currency === currency && (!debt.paid || assignedDebtIds.includes(debt.id))).length;
+  const receivableDebtCount = debts.filter((debt) => debt.type === "receivable" && debt.currency === currency && (!debt.paid || assignedDebtIds.includes(debt.id))).length;
 
   const resetForm = () => {
     setEditingId("");
     setTitle("");
     setAmount("");
     setCurrency("Bs");
+    setDebtFilter("payable");
     setEstimatedDate(localDateString());
     setAssignments([]);
     setExpenseTitle("");
@@ -388,8 +394,25 @@ export default function Planificador() {
 
           <fieldset className="mt-6">
             <legend className="text-xs uppercase text-white/70">Deudas a liquidar · {currency}</legend>
+            <div className="mt-3 inline-flex w-full max-w-xl rounded-xl border border-[#ddab36]/30 bg-black/45 p-1" role="group" aria-label="Filtrar deudas por tipo">
+              {([
+                { value: "payable", label: "Deudas que debo", count: payableDebtCount },
+                { value: "receivable", label: "Me deben", count: receivableDebtCount },
+              ] as const).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={debtFilter === option.value}
+                  onClick={() => setDebtFilter(option.value)}
+                  className={`flex min-h-10 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-[10px] uppercase transition-colors sm:text-xs ${debtFilter === option.value ? "bg-[#ddab36] font-bold text-[#121212]" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
+                >
+                  <span>{option.label}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${debtFilter === option.value ? "bg-black/15" : "bg-white/10"}`}>{option.count}</span>
+                </button>
+              ))}
+            </div>
             {availableDebts.length === 0 && missingAssignments.length === 0 ? (
-              <p className="mt-3 text-sm text-white/50">No hay deudas pendientes en esta moneda. Puedes guardar el ingreso sin asignaciones.</p>
+              <p className="mt-3 text-sm text-white/50">No hay deudas pendientes en esta vista y moneda.</p>
             ) : (
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {availableDebts.map((debt) => {
@@ -410,6 +433,22 @@ export default function Planificador() {
                     <button type="button" onClick={() => toggleDebt(debtId)} className="min-h-9 shrink-0 rounded border border-red-200/40 px-2 uppercase hover:bg-red-900/40">Quitar</button>
                   </div>
                 ))}
+              </div>
+            )}
+            {assignedDebtIds.length > 0 && (
+              <div className="mt-4">
+                <p className="text-[10px] uppercase text-white/45">Deudas ya asignadas al ingreso</p>
+                <ul className="mt-2 space-y-2">
+                  {assignedDebtIds.map((debtId) => {
+                    const debt = debtsById.get(debtId);
+                    return (
+                      <li key={debtId} className="flex items-center justify-between gap-3 border border-white/10 bg-white/5 p-3 text-xs">
+                        <span className="min-w-0 wrap-break-word text-white/75">{debt?.title ?? `Deuda no disponible · ${debtId}`} {debt && <span className="text-white/45">· {debt.type === "payable" ? "Debo" : "Me deben"}</span>}</span>
+                        <button type="button" onClick={() => toggleDebt(debtId)} className="min-h-9 shrink-0 rounded border border-red-300/30 px-2 uppercase text-red-100 hover:bg-red-950/40">Quitar</button>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
           </fieldset>
