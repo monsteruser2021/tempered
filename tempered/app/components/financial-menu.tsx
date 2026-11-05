@@ -1,4 +1,5 @@
 import Link from "next/link";
+import PlannerDashboardAlert from "./planner-dashboard-alert";
 
 const financialApps = [
   { href: "/summary", label: "Resumen" },
@@ -22,6 +23,7 @@ export default function FinancialMenu() {
           <h1 className="font-display mt-10 max-w-full wrap-break-word text-center text-2xl uppercase tracking-[0.06em] text-[#ddab36] sm:text-5xl sm:tracking-widest">
             Isorropia Kairos
           </h1>
+          <PlannerDashboardAlert />
 
           <nav className="mt-16 grid min-w-0 gap-5 sm:grid-cols-2 md:grid-cols-3" aria-label="Opciones de Isorropia Kairos">
             {financialApps.map((item) => (

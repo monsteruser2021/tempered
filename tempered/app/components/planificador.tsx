@@ -23,12 +23,57 @@ import {
   type PlannedIncomeInput,
   type PlannedExpenseAssignment,
 } from "@/lib/planner";
+import {
+  assessNextPlannedIncome,
+  DEFAULT_PLANNER_ALERT_THRESHOLDS,
+  type PlannerAlertThresholds,
+} from "@/lib/planner-health";
 import { useSession } from "./session-context";
 import { localDateString } from "./task-data";
 import BackButton from "./back-button";
+import PlannerHealthBanner from "./planner-health-banner";
+import PlannerAlertSettings from "./planner-alert-settings";
+import { usePlannerAlertThresholds } from "./use-planner-alert-thresholds";
 
 function money(amount: number, currency: Currency) {
   return `${currency} ${amount.toFixed(2)}`;
+}
+
+function getCommitmentHealth(percentage: number, thresholds: PlannerAlertThresholds) {
+  if (percentage >= thresholds.critical) {
+    return {
+      label: "Crítico",
+      bar: "bg-red-400",
+      text: "text-red-200",
+      panel: "border-red-300/40 bg-red-950/40 text-red-100",
+      message: "⚠️ Ingreso altamente comprometido. Evita sumar nuevas deudas.",
+    };
+  }
+  if (percentage >= thresholds.danger) {
+    return {
+      label: "Peligro",
+      bar: "bg-orange-400",
+      text: "text-orange-200",
+      panel: "border-orange-300/40 bg-orange-950/40 text-orange-100",
+      message: "Tu margen de maniobra está en riesgo. Pausa nuevos compromisos y revisa tus pagos.",
+    };
+  }
+  if (percentage >= thresholds.caution) {
+    return {
+      label: "Precaución",
+      bar: "bg-amber-300",
+      text: "text-amber-200",
+      panel: "border-amber-300/40 bg-amber-950/35 text-amber-100",
+      message: "Tu margen disponible es reducido; revisa nuevos compromisos con cuidado.",
+    };
+  }
+  return {
+    label: "Saludable",
+    bar: "bg-emerald-400",
+    text: "text-emerald-200",
+    panel: "border-emerald-300/35 bg-emerald-950/30 text-emerald-100",
+    message: "Mantienes un margen de maniobra saludable.",
+  };
 }
 
 function readDebt(id: string, userId: string, data: Record<string, unknown>): Debt | null {
@@ -106,6 +151,8 @@ export default function Planificador() {
   const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [today, setToday] = useState(localDateString());
+  const alertThresholds = usePlannerAlertThresholds(userId);
 
   useEffect(() => {
     if (!userId) return;
@@ -150,6 +197,11 @@ export default function Planificador() {
       stopDebts();
     };
   }, [userId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(localDateString()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const orderedIncomes = useMemo(
     () => [...incomes].sort((a, b) => a.estimatedDate.localeCompare(b.estimatedDate)),
@@ -214,9 +266,12 @@ export default function Planificador() {
   };
 
   const toggleDebt = (debtId: string) => {
-    setAssignments((current) => current.some((item) => item.type === "debt" && item.debtId === debtId)
-      ? current.filter((item) => item.type !== "debt" || item.debtId !== debtId)
-      : [...current, { type: "debt", debtId }]);
+    if (assignedDebtIds.includes(debtId)) {
+      setAssignments((current) => current.filter((item) => item.type !== "debt" || item.debtId !== debtId));
+      setError("");
+      return;
+    }
+    previewAssignment({ type: "debt", debtId });
   };
 
   const addExpense = () => {
@@ -229,16 +284,13 @@ export default function Planificador() {
       setError("Selecciona una categoría válida para la moneda del ingreso.");
       return;
     }
-    setAssignments((current) => [...current, {
+    previewAssignment({
       type: "expense",
       title: expenseTitle.trim(),
       category: expenseCategory,
       amount: Math.round(numericAmount * 100) / 100,
       currency,
-    }]);
-    setExpenseTitle("");
-    setExpenseAmount("");
-    setError("");
+    });
   };
 
   const removeExpense = (expenseIndex: number) => {
@@ -257,6 +309,76 @@ export default function Planificador() {
     return total + (debt ? getOutstandingDebt(debt) : 0);
   }, plannedExpenses.reduce((total, expense) => total + expense.amount, 0));
   const missingAssignments = assignedDebtIds.filter((debtId) => !debtsById.has(debtId));
+  const formIncomeAmount = Number(amount) || 0;
+  const effectiveAlertThresholds = userId ? alertThresholds : DEFAULT_PLANNER_ALERT_THRESHOLDS;
+  const formCommitmentPercentage = formIncomeAmount > 0
+    ? formCommitment / formIncomeAmount * 100
+    : formCommitment > 0 ? 100 : 0;
+  const formHealth = getCommitmentHealth(formCommitmentPercentage, effectiveAlertThresholds);
+  const exceedsCapacity = formCommitment > formIncomeAmount + 0.005;
+
+  const currentMonth = localDateString().slice(0, 7);
+  const nextIncomeAssessment = useMemo(() => assessNextPlannedIncome(
+    incomes,
+    debts,
+    today,
+    effectiveAlertThresholds,
+  ), [debts, effectiveAlertThresholds, incomes, today]);
+  const monthlySummary = useMemo(() => {
+    const result: Record<Currency, { income: number; committed: number }> = {
+      Bs: { income: 0, committed: 0 },
+      "$": { income: 0, committed: 0 },
+    };
+    for (const income of incomes) {
+      if (income.estimatedDate.slice(0, 7) !== currentMonth || income.status !== "pendiente") continue;
+      const debtCommitment = income.assignments.reduce((total, assignment) => {
+        if (assignment.type !== "debt") return total;
+        const debt = debtsById.get(assignment.debtId);
+        return total + (debt ? getOutstandingDebt(debt) : 0);
+      }, 0);
+      const expenseCommitment = income.assignments.reduce(
+        (total, assignment) => total + (assignment.type === "expense" ? assignment.amount : 0),
+        0,
+      );
+      result[income.currency].income += income.amount;
+      result[income.currency].committed += debtCommitment + expenseCommitment;
+    }
+    return result;
+  }, [currentMonth, debtsById, incomes]);
+
+  function previewAssignment(assignment: PlannedAssignment) {
+    if (assignment.type === "debt") {
+      if (assignedDebtIds.includes(assignment.debtId)) return;
+      const debt = debtsById.get(assignment.debtId);
+      if (!debt) return;
+      const nextCommitted = formCommitment + getOutstandingDebt(debt);
+      const nextPercentage = formIncomeAmount > 0 ? nextCommitted / formIncomeAmount * 100 : 100;
+      const nextHealth = getCommitmentHealth(nextPercentage, effectiveAlertThresholds);
+      setAssignments((current) => [...current, assignment]);
+      setNotice("");
+      if (nextPercentage >= effectiveAlertThresholds.caution) {
+        setError(nextCommitted > formIncomeAmount + 0.005
+          ? `Sin respaldo suficiente: esta asignación elevaría el compromiso a ${nextPercentage.toFixed(0)}% y supera el ingreso.`
+          : `Alerta ${nextHealth.label.toLowerCase()}: esta asignación elevaría el compromiso a ${nextPercentage.toFixed(0)}% del ingreso.`);
+      } else {
+        setError("");
+      }
+      return;
+    }
+
+    const nextCommitted = formCommitment + assignment.amount;
+    const nextPercentage = formIncomeAmount > 0 ? nextCommitted / formIncomeAmount * 100 : 100;
+    const nextHealth = getCommitmentHealth(nextPercentage, effectiveAlertThresholds);
+    setAssignments((current) => [...current, assignment]);
+    setExpenseTitle("");
+    setExpenseAmount("");
+    setError(nextPercentage >= effectiveAlertThresholds.caution
+      ? nextCommitted > formIncomeAmount + 0.005
+        ? `Sin respaldo suficiente: este gasto elevaría el compromiso a ${nextPercentage.toFixed(0)}% y supera el ingreso.`
+        : `Alerta ${nextHealth.label.toLowerCase()}: este gasto elevaría el compromiso a ${nextPercentage.toFixed(0)}% del ingreso.`
+      : "");
+    setNotice("");
+  }
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -276,6 +398,10 @@ export default function Planificador() {
     }
     if (plannedExpenses.some((expense) => expense.currency !== currency)) {
       setError("Todos los gastos deben usar la misma moneda del ingreso.");
+      return;
+    }
+    if (formCommitment > numericAmount + 0.005) {
+      setError("No puedes guardar un plan que supera el monto del ingreso. Reduce o quita compromisos.");
       return;
     }
 
@@ -347,6 +473,51 @@ export default function Planificador() {
       {!userId && <p className="mt-6 border border-[#ddab36]/35 bg-black/50 p-4 text-sm text-white/75">No se encontró una sesión activa de Tempered.</p>}
       {error && <p role="alert" className="mt-6 border border-red-300/50 bg-red-950/50 p-4 text-sm text-red-100">{error}</p>}
       {notice && <p role="status" aria-live="polite" className="mt-6 border border-emerald-300/40 bg-emerald-950/40 p-4 text-sm text-emerald-100">{notice}</p>}
+
+      {userId && <PlannerAlertSettings key={`${userId}-${alertThresholds.caution}-${alertThresholds.danger}-${alertThresholds.critical}`} userId={userId} thresholds={alertThresholds} />}
+
+      {userId && <PlannerHealthBanner assessment={nextIncomeAssessment} />}
+
+      <section className="mt-8 border border-[#ddab36]/40 bg-black/55 p-5 sm:p-6" aria-labelledby="monthly-financial-health">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-white/45">Panorama del mes · {currentMonth}</p>
+            <h2 id="monthly-financial-health" className="mt-2 text-lg uppercase tracking-wider text-[#ddab36]">Salud financiera global</h2>
+          </div>
+          <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] uppercase text-white/55">Bs y $ por separado</span>
+        </div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {(["Bs", "$"] as const).map((summaryCurrency) => {
+            const summary = monthlySummary[summaryCurrency];
+            const percentage = summary.income > 0 ? summary.committed / summary.income * 100 : 0;
+            const health = getCommitmentHealth(percentage, effectiveAlertThresholds);
+            const freeAmount = summary.income - summary.committed;
+            return (
+              <article key={summaryCurrency} className={`border p-4 ${summary.income > 0 ? health.panel : "border-white/10 bg-white/5 text-white/70"}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-xs uppercase tracking-wider">{summaryCurrency === "Bs" ? "Bolívares" : "Dólares"}</h3>
+                  {summary.income > 0 && <span className="rounded-full border border-current/30 px-2.5 py-1 text-[10px] uppercase">{health.label} · {percentage.toFixed(0)}%</span>}
+                </div>
+                {summary.income > 0 ? (
+                  <>
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                      <div><p className="text-[9px] uppercase opacity-70">Proyectado</p><p className="mt-1 text-sm font-semibold">{money(summary.income, summaryCurrency)}</p></div>
+                      <div><p className="text-[9px] uppercase opacity-70">Comprometido</p><p className="mt-1 text-sm font-semibold">{money(summary.committed, summaryCurrency)}</p></div>
+                      <div><p className="text-[9px] uppercase opacity-70">Libre real</p><p className={`mt-1 text-sm font-semibold ${freeAmount < -0.005 ? "text-red-200" : ""}`}>{money(freeAmount, summaryCurrency)}</p></div>
+                    </div>
+                    <div className="mt-4 h-2 overflow-hidden rounded-full bg-black/20" role="progressbar" aria-label={`Compromiso mensual en ${summaryCurrency}`} aria-valuenow={Math.round(percentage)} aria-valuemin={0} aria-valuemax={100}>
+                      <div className={`h-full rounded-full ${health.bar}`} style={{ width: `${Math.min(100, percentage)}%` }} />
+                    </div>
+                    <p className="mt-3 text-xs leading-5">{percentage >= effectiveAlertThresholds.critical ? "⚠️ Dinero libre real en zona crítica. Evita asumir nuevas deudas." : health.message}</p>
+                  </>
+                ) : (
+                  <p className="mt-3 text-xs leading-5">Sin ingresos proyectados pendientes para este mes en esta moneda.</p>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg uppercase tracking-wider text-white">Ingresos proyectados</h2>
@@ -487,8 +658,15 @@ export default function Planificador() {
             )}
           </fieldset>
           <p className={`mt-4 text-sm ${formCommitment > Number(amount || 0) ? "text-red-200" : "text-white/60"}`}>
-            Comprometido: {money(formCommitment, currency)} · Libre: {money(Number(amount || 0) - formCommitment, currency)}
+            Comprometido: {money(formCommitment, currency)} · Libre: {money(formIncomeAmount - formCommitment, currency)} · {formIncomeAmount > 0 ? `${formCommitmentPercentage.toFixed(0)}% comprometido` : "Indica el monto del ingreso"}
           </p>
+          {(formCommitment > formIncomeAmount + 0.005 || (formIncomeAmount > 0 && formCommitmentPercentage >= effectiveAlertThresholds.caution)) && (
+            <div role="status" aria-live="polite" className={`mt-3 border p-3 text-xs leading-5 ${exceedsCapacity ? "border-red-300/50 bg-red-950/50 text-red-100" : formHealth.panel}`}>
+              {exceedsCapacity
+                ? `⚠️ Sin respaldo suficiente: los compromisos superan el ingreso en ${money(formCommitment - formIncomeAmount, currency)}. Reduce o quita asignaciones antes de guardar.`
+                : `${formHealth.label}: ${formHealth.message}`}
+            </div>
+          )}
           <div className="mt-6 flex flex-wrap gap-3">
             <button type="submit" disabled={!userId || saving || Boolean(busyId)} className="min-h-11 rounded-lg bg-[#ddab36] px-5 py-3 text-xs font-bold uppercase text-[#121212] disabled:opacity-50">
               {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear ingreso"}
@@ -519,7 +697,9 @@ export default function Planificador() {
             );
             const expenseCommitment = expenses.reduce((total, expense) => total + expense.amount, 0);
             const committed = debtCommitment + expenseCommitment;
-            const coverage = income.amount > 0 ? Math.min(100, committed / income.amount * 100) : 0;
+            const percentage = income.amount > 0 ? committed / income.amount * 100 : 0;
+            const coverage = Math.min(100, percentage);
+            const health = getCommitmentHealth(percentage, effectiveAlertThresholds);
             const freeAmount = income.amount - committed;
             const canExecute = income.status === "pendiente"
               && missingCount === 0
@@ -545,11 +725,15 @@ export default function Planificador() {
                   <div className={`min-w-0 border p-3 ${freeAmount < -0.005 ? "border-red-300/30 bg-red-950/30" : "border-white/10 bg-white/5"}`}><p className="text-[10px] uppercase text-white/45">Libre</p><p className={`mt-2 wrap-break-word text-sm font-semibold ${freeAmount < -0.005 ? "text-red-200" : "text-emerald-200"}`}>{money(freeAmount, income.currency)}</p></div>
                 </div>
 
-                <div className="mt-4" aria-label={`Cobertura de compromisos: ${Math.round(coverage)} por ciento`}>
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                    <div className={`h-full rounded-full transition-all ${committed > income.amount ? "bg-red-400" : "bg-[#ddab36]"}`} style={{ width: `${coverage}%` }} />
+                <div className="mt-4" aria-label={`Cobertura de compromisos: ${Math.round(percentage)} por ciento`}>
+                  <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-label={`Compromiso de ${income.title}`} aria-valuenow={Math.min(100, Math.round(percentage))} aria-valuemin={0} aria-valuemax={100}>
+                    <div className={`h-full rounded-full transition-all ${health.bar}`} style={{ width: `${coverage}%` }} />
                   </div>
-                  <p className="mt-2 text-right text-[10px] uppercase text-white/45">{Math.round(coverage)}% comprometido</p>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <p className={`text-[10px] uppercase ${health.text}`}>{health.label}</p>
+                    <p className="text-right text-[10px] uppercase text-white/55">{Math.round(percentage)}% comprometido</p>
+                  </div>
+                  <p className={`mt-2 text-xs leading-5 ${health.text}`}>{health.message}</p>
                 </div>
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">

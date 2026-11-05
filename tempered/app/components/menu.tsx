@@ -1,4 +1,5 @@
 import Link from "next/link";
+import PlannerDashboardAlert from "./planner-dashboard-alert";
 
 const applications = [
   {
@@ -45,6 +46,8 @@ export default function Main() {
           <p className="mx-auto mt-5 max-w-xl text-center text-sm leading-6 text-white/65">
             Selecciona una aplicación para continuar.
           </p>
+
+          <PlannerDashboardAlert />
 
           <nav className="mt-12 grid min-w-0 gap-5 md:grid-cols-2 lg:grid-cols-4" aria-label="Aplicaciones de Tempered">
             {applications.map((application) => {
