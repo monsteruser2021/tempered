@@ -5,6 +5,7 @@ service cloud.firestore {
     function isModuleCollection(collectionName) {
       return collectionName in [
         'debts',
+        'plannedIncomes',
         'distributions',
         'balances',
         'budgets',
