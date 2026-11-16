@@ -41,6 +41,9 @@ type IncomeDraft = {
 type Props = { repartoId: string; draftId?: string };
 
 const categoriesByCurrency = PLANNER_CATEGORIES;
+const moneyFormatter = new Intl.NumberFormat("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatMoney = (amount: number, currency: Currency) =>
+  `${currency === "Bs" ? "Bs." : "$"} ${moneyFormatter.format(amount)}`;
 const emptyPercentages = (currency: Currency): Percentages =>
   Object.fromEntries(categoriesByCurrency[currency].map((category) => [category, 0]));
 const emptyPercentageInputs = (currency: Currency): PercentageInputs =>
@@ -220,6 +223,10 @@ export default function RepartoFondosDetalle({ repartoId, draftId }: Props) {
 
   const percentages = Object.fromEntries(categories.map((category) => [category, Number(percentageInputs[category]) || 0])) as Percentages;
   const percentageTotal = Object.values(percentages).reduce((sum, value) => sum + value, 0);
+  const amount = Number(totalBs);
+  const previewTotal = Number.isFinite(amount) && amount > 0 ? amount : 0;
+  const percentageProgress = Math.min(100, Math.max(0, percentageTotal));
+  const percentageDifference = Number(Math.abs(100 - percentageTotal).toFixed(4)).toString();
 
   const percentagesAreComplete = Math.abs(percentageTotal - 100) < 0.0001
     && categories.every((category) => {
@@ -352,8 +359,25 @@ export default function RepartoFondosDetalle({ repartoId, draftId }: Props) {
           <div className="mt-6 border-t border-white/10 pt-5">
             <h3 className="text-xs uppercase text-white/60">Porcentajes de este ingreso · {currency}</h3>
             <p className={`mt-2 text-sm ${percentagesAreComplete ? "text-emerald-300" : "text-amber-300"}`}>
-              Total asignado: {percentageTotal.toFixed(4)}% {percentagesAreComplete ? "(completo)" : "(debe ser exactamente 100%)"}
+              {percentagesAreComplete
+                ? `Total asignado: ${percentageTotal.toFixed(4)}% (completo)`
+                : percentageTotal < 100
+                  ? `Total asignado: ${percentageTotal.toFixed(4)}% · Faltan ${percentageDifference}%`
+                  : `Total asignado: ${percentageTotal.toFixed(4)}% · Excede por ${percentageDifference}%`}
             </p>
+            <div
+              className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"
+              role="progressbar"
+              aria-label="Porcentaje del ingreso distribuido"
+              aria-valuenow={percentageProgress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className={`h-full transition-[width] duration-150 ${percentageTotal > 100 ? "bg-red-300" : percentagesAreComplete ? "bg-emerald-300" : "bg-amber-300"}`}
+                style={{ width: `${percentageProgress}%` }}
+              />
+            </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {categories.map((category) => {
                 const negativeBalance = draft?.negativeBalances[category];
@@ -361,6 +385,7 @@ export default function RepartoFondosDetalle({ repartoId, draftId }: Props) {
                 return <label key={category} className={`flex items-center justify-between gap-3 rounded-xl border p-3 text-sm ${isNegative ? "border-red-300/45 bg-red-950/35 text-red-100" : "border-white/10 text-white/80"}`}>
                   <span className="min-w-0">
                     <span className="block">{category}{isNegative && <span className="ml-2 text-[10px] uppercase text-red-200">Prioridad</span>}</span>
+                    <span className="mt-1 block text-xs text-[#adc0fa]">Vista previa: {formatMoney(previewTotal * percentages[category] / 100, currency)}</span>
                     {isNegative && <span className="mt-1 block text-[10px] text-red-200/75">Saldo negativo detectado: {currency} {negativeBalance.toFixed(2)}</span>}
                   </span>
                   <span className="relative w-32 shrink-0"><input type="number" min="0" max="100" step="0.000001" placeholder="0" value={percentageInputs[category] ?? ""} onChange={(event) => updatePercentage(category, event.target.value)} className="w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-2 pr-8 text-right text-white outline-none placeholder:text-white/40" /><span className="absolute right-3 top-2 text-white/50">%</span></span>
