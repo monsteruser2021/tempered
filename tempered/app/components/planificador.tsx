@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot, query, where } from "firebase/firestore";
-import { CalendarDays, Check, CircleDollarSign, Pencil, Plus, Trash2 } from "lucide-react";
+import { collection, onSnapshot, query, Timestamp, where } from "firebase/firestore";
+import { CalendarDays, Check, ChevronLeft, ChevronRight, CircleDollarSign, Pencil, Plus, Trash2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import {
   getBalanceTransactions,
@@ -34,6 +34,10 @@ import BackButton from "./back-button";
 import PlannerHealthBanner from "./planner-health-banner";
 import PlannerAlertSettings from "./planner-alert-settings";
 import { usePlannerAlertThresholds } from "./use-planner-alert-thresholds";
+
+const HISTORY_PAGE_SIZE = 3;
+type PlannerIncome = PlannedIncome & { executedAt: number };
+type PlannerDebt = Debt & { updatedAt: number };
 
 function money(amount: number, currency: Currency) {
   return `${currency} ${amount.toFixed(2)}`;
@@ -76,7 +80,7 @@ function getCommitmentHealth(percentage: number, thresholds: PlannerAlertThresho
   };
 }
 
-function readDebt(id: string, userId: string, data: Record<string, unknown>): Debt | null {
+function readDebt(id: string, userId: string, data: Record<string, unknown>): PlannerDebt | null {
   const amount = Number(data.amount);
   if (
     typeof data.title !== "string"
@@ -99,10 +103,13 @@ function readDebt(id: string, userId: string, data: Record<string, unknown>): De
     paid: data.paid === true || paidAmount >= amount - 0.005,
     paidAmount,
     balanceTransactions: getBalanceTransactions(data),
+    updatedAt: data.updatedAt instanceof Timestamp
+      ? data.updatedAt.toMillis()
+      : data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : 0,
   };
 }
 
-function readIncome(id: string, userId: string, data: Record<string, unknown>): PlannedIncome | null {
+function readIncome(id: string, userId: string, data: Record<string, unknown>): PlannerIncome | null {
   const assignments = readPlannedAssignments(data);
   if (
     data.userId !== userId
@@ -125,13 +132,16 @@ function readIncome(id: string, userId: string, data: Record<string, unknown>): 
     estimatedDate: data.estimatedDate,
     status: data.status,
     assignments,
+    executedAt: data.executedAt instanceof Timestamp
+      ? data.executedAt.toMillis()
+      : data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : 0,
   };
 }
 
 export default function Planificador() {
   const { userId } = useSession();
-  const [incomes, setIncomes] = useState<PlannedIncome[]>([]);
-  const [debts, setDebts] = useState<Debt[]>([]);
+  const [incomes, setIncomes] = useState<PlannerIncome[]>([]);
+  const [debts, setDebts] = useState<PlannerDebt[]>([]);
   const [incomeOwnerId, setIncomeOwnerId] = useState<string | null>(null);
   const [debtOwnerId, setDebtOwnerId] = useState<string | null>(null);
   const [incomesLoading, setIncomesLoading] = useState(true);
@@ -142,6 +152,9 @@ export default function Planificador() {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState<Currency>("Bs");
   const [debtFilter, setDebtFilter] = useState<DebtType>("payable");
+  const [settledDebtType, setSettledDebtType] = useState<DebtType>("payable");
+  const [executedIncomePage, setExecutedIncomePage] = useState(1);
+  const [settledDebtPage, setSettledDebtPage] = useState(1);
   const [estimatedDate, setEstimatedDate] = useState(localDateString());
   const [assignments, setAssignments] = useState<PlannedAssignment[]>([]);
   const [expenseTitle, setExpenseTitle] = useState("");
@@ -165,7 +178,7 @@ export default function Planificador() {
         if (nextIncomes.some((income) => income === null)) {
           setError("Hay un ingreso proyectado con datos incompletos; revisa sus datos en Firestore.");
         }
-        setIncomes(nextIncomes.filter((income): income is PlannedIncome => income !== null));
+        setIncomes(nextIncomes.filter((income): income is PlannerIncome => income !== null));
         setIncomeOwnerId(ownerId);
         setIncomesLoading(false);
       },
@@ -182,7 +195,7 @@ export default function Planificador() {
         if (nextDebts.some((debt) => debt === null)) {
           setError("Hay una deuda con datos incompletos; no podrá asignarse al plan.");
         }
-        setDebts(nextDebts.filter((debt): debt is Debt => debt !== null));
+        setDebts(nextDebts.filter((debt): debt is PlannerDebt => debt !== null));
         setDebtOwnerId(ownerId);
         setDebtsLoading(false);
       },
@@ -203,9 +216,23 @@ export default function Planificador() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const orderedIncomes = useMemo(
-    () => [...incomes].sort((a, b) => a.estimatedDate.localeCompare(b.estimatedDate)),
+  const pendingIncomes = useMemo(
+    () => incomes
+      .filter((income) => income.status === "pendiente")
+      .sort((a, b) => a.estimatedDate.localeCompare(b.estimatedDate)),
     [incomes],
+  );
+  const executedIncomes = useMemo(
+    () => incomes
+      .filter((income) => income.status === "ejecutado")
+      .sort((a, b) => b.executedAt - a.executedAt || b.estimatedDate.localeCompare(a.estimatedDate)),
+    [incomes],
+  );
+  const executedIncomePageCount = Math.max(1, Math.ceil(executedIncomes.length / HISTORY_PAGE_SIZE));
+  const currentExecutedIncomePage = Math.min(executedIncomePage, executedIncomePageCount);
+  const pageExecutedIncomes = executedIncomes.slice(
+    (currentExecutedIncomePage - 1) * HISTORY_PAGE_SIZE,
+    currentExecutedIncomePage * HISTORY_PAGE_SIZE,
   );
   const debtsById = useMemo(() => new Map(debts.map((debt) => [debt.id, debt])), [debts]);
   const reservedDebtIds = useMemo(() => new Set(incomes
@@ -228,6 +255,18 @@ export default function Planificador() {
   );
   const payableDebtCount = debts.filter((debt) => debt.type === "payable" && debt.currency === currency && (!debt.paid || assignedDebtIds.includes(debt.id))).length;
   const receivableDebtCount = debts.filter((debt) => debt.type === "receivable" && debt.currency === currency && (!debt.paid || assignedDebtIds.includes(debt.id))).length;
+  const settledDebts = useMemo(
+    () => debts
+      .filter((debt) => debt.paid && debt.type === settledDebtType)
+      .sort((a, b) => b.updatedAt - a.updatedAt || b.dueDate.localeCompare(a.dueDate)),
+    [debts, settledDebtType],
+  );
+  const settledDebtPageCount = Math.max(1, Math.ceil(settledDebts.length / HISTORY_PAGE_SIZE));
+  const currentSettledDebtPage = Math.min(settledDebtPage, settledDebtPageCount);
+  const pageSettledDebts = settledDebts.slice(
+    (currentSettledDebtPage - 1) * HISTORY_PAGE_SIZE,
+    currentSettledDebtPage * HISTORY_PAGE_SIZE,
+  );
 
   const resetForm = () => {
     setEditingId("");
@@ -457,6 +496,112 @@ export default function Planificador() {
     }
   };
 
+  const renderIncomeCard = (income: PlannerIncome) => {
+    const incomeDebtIds = income.assignments.flatMap(
+      (assignment) => assignment.type === "debt" ? [assignment.debtId] : [],
+    );
+    const assigned = incomeDebtIds.map((id) => debtsById.get(id)).filter((debt): debt is PlannerDebt => Boolean(debt));
+    const missingCount = incomeDebtIds.length - assigned.length;
+    const expenses = income.assignments.filter(
+      (assignment): assignment is PlannedExpenseAssignment => assignment.type === "expense",
+    );
+    const debtCommitment = assigned.reduce(
+      (total, debt) => total + (income.status === "ejecutado" ? debt.paidAmount : getOutstandingDebt(debt)),
+      0,
+    );
+    const expenseCommitment = expenses.reduce((total, expense) => total + expense.amount, 0);
+    const committed = debtCommitment + expenseCommitment;
+    const percentage = income.amount > 0 ? committed / income.amount * 100 : 0;
+    const coverage = Math.min(100, percentage);
+    const health = getCommitmentHealth(percentage, effectiveAlertThresholds);
+    const freeAmount = income.amount - committed;
+    const canExecute = income.status === "pendiente"
+      && missingCount === 0
+      && assigned.every((debt) => debt.currency === income.currency)
+      && expenses.every((expense) => expense.currency === income.currency)
+      && committed <= income.amount + 0.005;
+
+    return (
+      <article key={income.id} className={`border bg-black/45 p-5 sm:p-6 ${income.status === "ejecutado" ? "border-emerald-300/30" : "border-[#ddab36]/35"}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="wrap-break-word text-base uppercase text-white">{income.title}</h3>
+            <p className="mt-2 flex items-center gap-2 text-xs text-white/55"><CalendarDays aria-hidden="true" size={14} /> Estimado: {income.estimatedDate}</p>
+            {income.status === "ejecutado" && income.executedAt > 0 && (
+              <p className="mt-1 text-xs text-emerald-100/65">Ejecutado: {new Date(income.executedAt).toLocaleDateString("es-VE")}</p>
+            )}
+          </div>
+          <span className={`shrink-0 rounded-full border px-3 py-1 text-[10px] uppercase tracking-wider ${income.status === "ejecutado" ? "border-emerald-300/40 text-emerald-200" : "border-amber-200/40 text-amber-100"}`}>
+            {income.status}
+          </span>
+        </div>
+
+        <div className="mt-6 grid grid-cols-3 gap-2 text-center">
+          <div className="min-w-0 border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-white/45">Ingreso</p><p className="mt-2 wrap-break-word text-sm font-semibold text-white">{money(income.amount, income.currency)}</p></div>
+          <div className="min-w-0 border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-white/45">Comprometido</p><p className="mt-2 wrap-break-word text-sm font-semibold text-amber-100">{money(committed, income.currency)}</p></div>
+          <div className={`min-w-0 border p-3 ${freeAmount < -0.005 ? "border-red-300/30 bg-red-950/30" : "border-white/10 bg-white/5"}`}><p className="text-[10px] uppercase text-white/45">Libre</p><p className={`mt-2 wrap-break-word text-sm font-semibold ${freeAmount < -0.005 ? "text-red-200" : "text-emerald-200"}`}>{money(freeAmount, income.currency)}</p></div>
+        </div>
+
+        <div className="mt-4" aria-label={`Cobertura de compromisos: ${Math.round(percentage)} por ciento`}>
+          <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-label={`Compromiso de ${income.title}`} aria-valuenow={Math.min(100, Math.round(percentage))} aria-valuemin={0} aria-valuemax={100}>
+            <div className={`h-full rounded-full transition-all ${health.bar}`} style={{ width: `${coverage}%` }} />
+          </div>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <p className={`text-[10px] uppercase ${health.text}`}>{health.label}</p>
+            <p className="text-right text-[10px] uppercase text-white/55">{Math.round(percentage)}% comprometido</p>
+          </div>
+          <p className={`mt-2 text-xs leading-5 ${health.text}`}>{health.message}</p>
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="text-[10px] uppercase text-white/45">Deudas a liquidar</p>
+            {assigned.length === 0 && missingCount === 0 ? (
+              <p className="mt-2 text-xs text-white/50">Sin deudas asignadas.</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {assigned.map((debt) => (
+                  <li key={debt.id} className="flex items-center justify-between gap-3 text-xs text-white/70">
+                    <span className="min-w-0 wrap-break-word">{debt.title}{debt.paid ? " · Saldada" : ""}</span>
+                    <span className="shrink-0">{money(income.status === "ejecutado" ? debt.paidAmount : getOutstandingDebt(debt), debt.currency)}</span>
+                  </li>
+                ))}
+                {missingCount > 0 && <li className="text-xs text-red-200">{missingCount} deuda(s) ya no disponible(s); edita el plan antes de ejecutarlo.</li>}
+              </ul>
+            )}
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-white/45">Gastos fijos / por categoría</p>
+            {expenses.length === 0 ? (
+              <p className="mt-2 text-xs text-white/50">Sin gastos asignados.</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {expenses.map((expense, index) => (
+                  <li key={`${expense.title}-${index}`} className="flex items-center justify-between gap-3 text-xs text-white/70">
+                    <span className="min-w-0 wrap-break-word">{expense.title} <span className="text-white/45">· {expense.category}</span></span>
+                    <span className="shrink-0">{money(expense.amount, expense.currency)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {income.status === "pendiente" && (
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={() => editIncome(income)} disabled={Boolean(busyId) || saving} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ddab36]/40 px-3 py-2 text-xs uppercase text-[#ddab36] hover:bg-[#ddab36]/10 disabled:opacity-50"><Pencil aria-hidden="true" size={14} /> Editar</button>
+            <button type="button" onClick={() => void removeIncome(income)} disabled={Boolean(busyId) || saving} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-100 hover:bg-red-950/50 disabled:opacity-50"><Trash2 aria-hidden="true" size={14} /> Eliminar</button>
+            <button type="button" onClick={() => void runPlan(income)} disabled={!userId || Boolean(busyId) || saving || !canExecute} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#ddab36] px-4 py-2 text-xs font-bold uppercase text-[#121212] hover:bg-[#f0c55a] disabled:cursor-not-allowed disabled:opacity-50">
+              {busyId === income.id ? <CircleDollarSign aria-hidden="true" className="animate-pulse" size={15} /> : <Check aria-hidden="true" size={15} />}
+              {busyId === income.id ? "Ejecutando..." : "Ejecutar plan / cobrar"}
+            </button>
+          </div>
+        )}
+        {busyId && busyId !== income.id && <p className="mt-3 text-right text-xs text-white/45">Procesando otro ingreso...</p>}
+      </article>
+    );
+  };
+
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -678,115 +823,120 @@ export default function Planificador() {
 
       {!userId ? null : (incomesLoading || debtsLoading || incomeOwnerId !== userId || debtOwnerId !== userId) ? (
         <p role="status" className="mt-6 text-sm text-white/60">Sincronizando ingresos y deudas...</p>
-      ) : orderedIncomes.length === 0 ? (
-        <p className="mt-5 border border-white/15 bg-black/35 p-6 text-sm text-white/60">Aún no tienes ingresos proyectados. Crea uno para organizar tus próximos compromisos.</p>
       ) : (
-        <section className="mt-5 grid gap-4 lg:grid-cols-2" aria-label="Ingresos proyectados">
-          {orderedIncomes.map((income) => {
-            const incomeDebtIds = income.assignments.flatMap(
-              (assignment) => assignment.type === "debt" ? [assignment.debtId] : [],
-            );
-            const assigned = incomeDebtIds.map((id) => debtsById.get(id)).filter((debt): debt is Debt => Boolean(debt));
-            const missingCount = incomeDebtIds.length - assigned.length;
-            const expenses = income.assignments.filter(
-              (assignment): assignment is PlannedExpenseAssignment => assignment.type === "expense",
-            );
-            const debtCommitment = assigned.reduce(
-              (total, debt) => total + (income.status === "ejecutado" ? debt.paidAmount : getOutstandingDebt(debt)),
-              0,
-            );
-            const expenseCommitment = expenses.reduce((total, expense) => total + expense.amount, 0);
-            const committed = debtCommitment + expenseCommitment;
-            const percentage = income.amount > 0 ? committed / income.amount * 100 : 0;
-            const coverage = Math.min(100, percentage);
-            const health = getCommitmentHealth(percentage, effectiveAlertThresholds);
-            const freeAmount = income.amount - committed;
-            const canExecute = income.status === "pendiente"
-              && missingCount === 0
-              && assigned.every((debt) => debt.currency === income.currency)
-              && expenses.every((expense) => expense.currency === income.currency)
-              && committed <= income.amount + 0.005;
+        <>
+          <section className="mt-5" aria-labelledby="pending-planned-incomes">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 id="pending-planned-incomes" className="text-xl uppercase text-[#ddab36]">Ingresos planificados pendientes</h2>
+              <span className="text-xs text-white/50">{pendingIncomes.length} registros</span>
+            </div>
+            {pendingIncomes.length === 0 ? (
+              <p className="mt-5 border border-white/15 bg-black/35 p-6 text-sm text-white/60">No hay ingresos proyectados pendientes. Crea uno para organizar tus próximos compromisos.</p>
+            ) : (
+              <div className="mt-5 grid gap-4 lg:grid-cols-2" aria-label="Ingresos planificados pendientes">
+                {pendingIncomes.map(renderIncomeCard)}
+              </div>
+            )}
+          </section>
 
-            return (
-              <article key={income.id} className={`border bg-black/45 p-5 sm:p-6 ${income.status === "ejecutado" ? "border-emerald-300/30" : "border-[#ddab36]/35"}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="wrap-break-word text-base uppercase text-white">{income.title}</h3>
-                    <p className="mt-2 flex items-center gap-2 text-xs text-white/55"><CalendarDays aria-hidden="true" size={14} /> Estimado: {income.estimatedDate}</p>
-                  </div>
-                  <span className={`shrink-0 rounded-full border px-3 py-1 text-[10px] uppercase tracking-wider ${income.status === "ejecutado" ? "border-emerald-300/40 text-emerald-200" : "border-amber-200/40 text-amber-100"}`}>
-                    {income.status}
-                  </span>
+          <section className="mt-10" aria-labelledby="executed-income-history">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 id="executed-income-history" className="text-xl uppercase text-[#ddab36]">Historial de Ingresos Ejecutados</h2>
+              <span className="text-xs text-white/50">{executedIncomes.length} registros</span>
+            </div>
+            {pageExecutedIncomes.length === 0 ? (
+              <p className="mt-5 border border-dashed border-[#ddab36]/30 p-5 text-sm text-white/55">Aún no hay ingresos ejecutados.</p>
+            ) : (
+              <>
+                <div className="mt-5 grid gap-4 lg:grid-cols-2" aria-label="Ingresos ejecutados">
+                  {pageExecutedIncomes.map(renderIncomeCard)}
                 </div>
+                <nav className="mt-5 flex flex-wrap items-center justify-center gap-3" aria-label="Paginación del historial de ingresos ejecutados">
+                  <button
+                    type="button"
+                    onClick={() => setExecutedIncomePage(Math.max(1, currentExecutedIncomePage - 1))}
+                    disabled={currentExecutedIncomePage <= 1}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ddab36]/40 px-4 py-2 text-xs uppercase text-[#ddab36] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft aria-hidden="true" size={15} /> Anterior
+                  </button>
+                  <span className="text-xs text-white/55">Página {currentExecutedIncomePage} de {executedIncomePageCount}</span>
+                  <button
+                    type="button"
+                    onClick={() => setExecutedIncomePage(Math.min(executedIncomePageCount, currentExecutedIncomePage + 1))}
+                    disabled={currentExecutedIncomePage >= executedIncomePageCount}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ddab36]/40 px-4 py-2 text-xs uppercase text-[#ddab36] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Siguiente <ChevronRight aria-hidden="true" size={15} />
+                  </button>
+                </nav>
+              </>
+            )}
+          </section>
 
-                <div className="mt-6 grid grid-cols-3 gap-2 text-center">
-                  <div className="min-w-0 border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-white/45">Ingreso</p><p className="mt-2 wrap-break-word text-sm font-semibold text-white">{money(income.amount, income.currency)}</p></div>
-                  <div className="min-w-0 border border-white/10 bg-white/5 p-3"><p className="text-[10px] uppercase text-white/45">Comprometido</p><p className="mt-2 wrap-break-word text-sm font-semibold text-amber-100">{money(committed, income.currency)}</p></div>
-                  <div className={`min-w-0 border p-3 ${freeAmount < -0.005 ? "border-red-300/30 bg-red-950/30" : "border-white/10 bg-white/5"}`}><p className="text-[10px] uppercase text-white/45">Libre</p><p className={`mt-2 wrap-break-word text-sm font-semibold ${freeAmount < -0.005 ? "text-red-200" : "text-emerald-200"}`}>{money(freeAmount, income.currency)}</p></div>
+          <section className="mt-10" aria-labelledby="settled-debt-history">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 id="settled-debt-history" className="text-xl uppercase text-[#ddab36]">Historial de deudas</h2>
+              <span className="text-xs text-white/50">{settledDebts.length} registros</span>
+            </div>
+            <div className="mt-4 inline-flex w-full max-w-2xl rounded-xl border border-[#ddab36]/30 bg-black/45 p-1" role="tablist" aria-label="Tipo de deuda saldada">
+              {([
+                { value: "payable", label: "Deudas que debía (Pagadas)" },
+                { value: "receivable", label: "Deudas que me debían (Cobradas)" },
+              ] as const).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={settledDebtType === option.value}
+                  onClick={() => {
+                    setSettledDebtType(option.value);
+                    setSettledDebtPage(1);
+                  }}
+                  className={`flex min-h-11 flex-1 items-center justify-center rounded-lg px-3 py-2 text-[10px] uppercase transition-colors sm:text-xs ${settledDebtType === option.value ? "bg-[#ddab36] font-bold text-[#121212]" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {pageSettledDebts.length === 0 ? (
+              <p className="mt-5 border border-dashed border-[#ddab36]/30 p-5 text-sm text-white/55">
+                {settledDebtType === "payable" ? "Aún no hay deudas pagadas." : "Aún no hay deudas cobradas."}
+              </p>
+            ) : (
+              <>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Deudas saldadas">
+                  {pageSettledDebts.map((debt) => (
+                    <article key={debt.id} className="border border-emerald-300/25 bg-black/40 p-4">
+                      <h3 className="wrap-break-word text-sm uppercase text-white">{debt.title}</h3>
+                      <p className="mt-2 text-xs text-white/55">{debt.type === "payable" ? "Pagada" : "Cobrada"} · Fecha límite: {debt.dueDate}</p>
+                      <p className="mt-3 text-xs text-white/70">Saldado: {money(debt.paidAmount, debt.currency)} de {money(debt.amount, debt.currency)}</p>
+                    </article>
+                  ))}
                 </div>
-
-                <div className="mt-4" aria-label={`Cobertura de compromisos: ${Math.round(percentage)} por ciento`}>
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-label={`Compromiso de ${income.title}`} aria-valuenow={Math.min(100, Math.round(percentage))} aria-valuemin={0} aria-valuemax={100}>
-                    <div className={`h-full rounded-full transition-all ${health.bar}`} style={{ width: `${coverage}%` }} />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className={`text-[10px] uppercase ${health.text}`}>{health.label}</p>
-                    <p className="text-right text-[10px] uppercase text-white/55">{Math.round(percentage)}% comprometido</p>
-                  </div>
-                  <p className={`mt-2 text-xs leading-5 ${health.text}`}>{health.message}</p>
-                </div>
-
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-[10px] uppercase text-white/45">Deudas a liquidar</p>
-                    {assigned.length === 0 && missingCount === 0 ? (
-                      <p className="mt-2 text-xs text-white/50">Sin deudas asignadas.</p>
-                    ) : (
-                      <ul className="mt-2 space-y-2">
-                        {assigned.map((debt) => (
-                          <li key={debt.id} className="flex items-center justify-between gap-3 text-xs text-white/70">
-                            <span className="min-w-0 wrap-break-word">{debt.title}{debt.paid ? " · Saldada" : ""}</span>
-                            <span className="shrink-0">{money(income.status === "ejecutado" ? debt.paidAmount : getOutstandingDebt(debt), debt.currency)}</span>
-                          </li>
-                        ))}
-                        {missingCount > 0 && <li className="text-xs text-red-200">{missingCount} deuda(s) ya no disponible(s); edita el plan antes de ejecutarlo.</li>}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-[10px] uppercase text-white/45">Gastos fijos / por categoría</p>
-                    {expenses.length === 0 ? (
-                      <p className="mt-2 text-xs text-white/50">Sin gastos asignados.</p>
-                    ) : (
-                      <ul className="mt-2 space-y-2">
-                        {expenses.map((expense, index) => (
-                          <li key={`${expense.title}-${index}`} className="flex items-center justify-between gap-3 text-xs text-white/70">
-                            <span className="min-w-0 wrap-break-word">{expense.title} <span className="text-white/45">· {expense.category}</span></span>
-                            <span className="shrink-0">{money(expense.amount, expense.currency)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-5 flex flex-wrap justify-end gap-2">
-                  {income.status === "pendiente" && (
-                    <>
-                      <button type="button" onClick={() => editIncome(income)} disabled={Boolean(busyId) || saving} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ddab36]/40 px-3 py-2 text-xs uppercase text-[#ddab36] hover:bg-[#ddab36]/10 disabled:opacity-50"><Pencil aria-hidden="true" size={14} /> Editar</button>
-                      <button type="button" onClick={() => void removeIncome(income)} disabled={Boolean(busyId) || saving} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-100 hover:bg-red-950/50 disabled:opacity-50"><Trash2 aria-hidden="true" size={14} /> Eliminar</button>
-                      <button type="button" onClick={() => void runPlan(income)} disabled={!userId || Boolean(busyId) || saving || !canExecute} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#ddab36] px-4 py-2 text-xs font-bold uppercase text-[#121212] hover:bg-[#f0c55a] disabled:cursor-not-allowed disabled:opacity-50">
-                        {busyId === income.id ? <CircleDollarSign aria-hidden="true" className="animate-pulse" size={15} /> : <Check aria-hidden="true" size={15} />}
-                        {busyId === income.id ? "Ejecutando..." : "Ejecutar plan / cobrar"}
-                      </button>
-                    </>
-                  )}
-                  {busyId && busyId !== income.id && <span className="self-center text-xs text-white/45">Procesando otro ingreso...</span>}
-                </div>
-              </article>
-            );
-          })}
-        </section>
+                <nav className="mt-5 flex flex-wrap items-center justify-center gap-3" aria-label="Paginación del historial de deudas">
+                  <button
+                    type="button"
+                    onClick={() => setSettledDebtPage(Math.max(1, currentSettledDebtPage - 1))}
+                    disabled={currentSettledDebtPage <= 1}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ddab36]/40 px-4 py-2 text-xs uppercase text-[#ddab36] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ChevronLeft aria-hidden="true" size={15} /> Anterior
+                  </button>
+                  <span className="text-xs text-white/55">Página {currentSettledDebtPage} de {settledDebtPageCount}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSettledDebtPage(Math.min(settledDebtPageCount, currentSettledDebtPage + 1))}
+                    disabled={currentSettledDebtPage >= settledDebtPageCount}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#ddab36]/40 px-4 py-2 text-xs uppercase text-[#ddab36] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Siguiente <ChevronRight aria-hidden="true" size={15} />
+                  </button>
+                </nav>
+              </>
+            )}
+          </section>
+        </>
       )}
     </main>
   );
