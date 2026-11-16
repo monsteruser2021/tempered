@@ -1,5 +1,5 @@
-import Distribucion from "../components/distribucion";
+import { redirect } from "next/navigation";
 
-export default function DistribucionPage() {
-  return <Distribucion />;
+export default function LegacyRepartoFondosPage() {
+  redirect("/reparto-fondos");
 }

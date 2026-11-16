@@ -45,20 +45,20 @@ export async function registerMythicalSale({ userId, investmentId, quantity }: S
   const date = localDateString(now);
   const month = now.getMonth();
   const year = now.getFullYear();
-  const distributionsSnapshot = await getDocs(query(
+  const repartosSnapshot = await getDocs(query(
     collection(db, "distributions"),
     where("userId", "==", ownerId),
     where("month", "==", month),
     where("year", "==", year),
   ));
-  const existingDistribution = distributionsSnapshot.docs[0];
-  const distributionId = existingDistribution?.id ?? `period-${encodeURIComponent(ownerId)}-${year}-${String(month + 1).padStart(2, "0")}`;
-  const distributionRef = doc(db, "distributions", distributionId);
+  const existingReparto = repartosSnapshot.docs[0];
+  const repartoId = existingReparto?.id ?? `period-${encodeURIComponent(ownerId)}-${year}-${String(month + 1).padStart(2, "0")}`;
+  const repartoRef = doc(db, "distributions", repartoId);
 
   return runTransaction(db, async (transaction) => {
-    const [investmentSnapshot, distributionSnapshot] = await Promise.all([
+    const [investmentSnapshot, repartoSnapshot] = await Promise.all([
       transaction.get(investmentRef),
-      transaction.get(distributionRef),
+      transaction.get(repartoRef),
     ]);
 
     if (!investmentSnapshot.exists()) throw new Error("El artículo ya no existe.");
@@ -82,12 +82,12 @@ export async function registerMythicalSale({ userId, investmentId, quantity }: S
     const investmentCategory = currency === "Bs" ? "Inversión" : "Inversiones";
     const gainsCategory = "Ahorro";
     const description = `Venta de ${String(investment.title ?? "artículo")} - Unidades: ${quantity}`;
-    const investmentIncomeRef = doc(collection(db, "distributions", distributionId, transactionCollection));
-    const gainsIncomeRef = doc(collection(db, "distributions", distributionId, transactionCollection));
+    const investmentIncomeRef = doc(collection(db, "distributions", repartoId, transactionCollection));
+    const gainsIncomeRef = doc(collection(db, "distributions", repartoId, transactionCollection));
 
-    if (!distributionSnapshot.exists()) {
-      transaction.set(distributionRef, {
-        name: "Distribución",
+    if (!repartoSnapshot.exists()) {
+      transaction.set(repartoRef, {
+        name: "Reparto de Fondos",
         userId: ownerId,
         month,
         year,

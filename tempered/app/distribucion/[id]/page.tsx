@@ -1,9 +1,6 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { useParams } from "next/navigation";
-import DistribucionDetalle from "../../components/distribucion-detalle";
-
-export default function DistributionDetailPage() {
-  const params = useParams<{ id: string }>();
-  return <DistribucionDetalle distributionId={params.id} />;
+export default async function LegacyRepartoFondosDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  redirect(`/reparto-fondos/${id}`);
 }

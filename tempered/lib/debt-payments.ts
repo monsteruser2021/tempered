@@ -28,7 +28,7 @@ export type Debt = {
 };
 export type DebtInput = Omit<Debt, "id" | "userId" | "paidAmount" | "balanceTransactions">;
 
-const debtCategory = (currency: Currency) => currency === "Bs" ? "Otros gastos" : "Ahorro";
+export const debtCategory = (currency: Currency) => currency === "Bs" ? "Otros gastos" : "Ahorro";
 
 export function getOutstandingDebt(debt: Pick<Debt, "amount" | "paid" | "paidAmount">) {
   return debt.paid ? 0 : Math.max(0, debt.amount - debt.paidAmount);
@@ -76,19 +76,19 @@ export async function saveDebtAndPayment(
   const debtRef = debtId ? doc(db, "debts", debtId) : doc(collection(db, "debts"));
   const today = localDateString();
   const [year, month] = today.split("-").map(Number);
-  let currentDistributionId: string | undefined;
+  let currentRepartoId: string | undefined;
 
   if (paymentOverride !== undefined || input.paid) {
     if (typeof userId !== "string" || userId.trim() === "") {
       throw new Error("Debes iniciar sesión para registrar el pago.");
     }
     const ownerId = userId.trim();
-    const distributions = await getDocs(query(collection(db, "distributions"), where("userId", "==", ownerId)));
-    const currentDistributions = distributions.docs.filter((item) => {
+    const repartos = await getDocs(query(collection(db, "distributions"), where("userId", "==", ownerId)));
+    const currentRepartos = repartos.docs.filter((item) => {
       const data = item.data();
       return Number(data.month) === month - 1 && Number(data.year) === year;
     });
-    currentDistributionId = (currentDistributions.find((item) => item.data().isAutomatic !== true) ?? currentDistributions[0])?.id;
+    currentRepartoId = (currentRepartos.find((item) => item.data().isAutomatic !== true) ?? currentRepartos[0])?.id;
   }
 
   return runTransaction(db, async (transaction) => {
@@ -137,19 +137,19 @@ export async function saveDebtAndPayment(
     const nextPaidAmount = needsReversal ? 0 : Math.min(input.amount, existingPaidAmount + amountToApply);
     const nextPaid = nextPaidAmount >= input.amount - 0.005;
     const needsPayment = amountToApply > 0;
-    const distributionId = currentDistributionId;
+    const repartoId = currentRepartoId;
     if (needsPayment) {
-      if (!distributionId) throw new Error("No existe una distribución para el mes actual; créala antes de registrar el pago.");
-      const distributionRef = doc(db, "distributions", distributionId);
-      const distributionSnapshot = await transaction.get(distributionRef);
-      const distribution = distributionSnapshot.data();
+      if (!repartoId) throw new Error("No existe un reparto de fondos para el mes actual; créalo antes de registrar el pago.");
+      const repartoRef = doc(db, "distributions", repartoId);
+      const repartoSnapshot = await transaction.get(repartoRef);
+      const reparto = repartoSnapshot.data();
       if (
-        !distributionSnapshot.exists()
-        || distribution?.userId !== userId
-        || Number(distribution.month) !== month - 1
-        || Number(distribution.year) !== year
+        !repartoSnapshot.exists()
+        || reparto?.userId !== userId
+        || Number(reparto.month) !== month - 1
+        || Number(reparto.year) !== year
       ) {
-        throw new Error("La distribución del mes actual ya no está disponible. Actualiza la página e inténtalo de nuevo.");
+        throw new Error("El reparto de fondos del mes actual ya no está disponible. Actualiza la página e inténtalo de nuevo.");
       }
     }
 
@@ -169,11 +169,11 @@ export async function saveDebtAndPayment(
 
     let newBalanceTransaction: BalanceTransactionLink | undefined;
     if (needsPayment) {
-      if (!distributionId) throw new Error("No existe una distribución para el mes actual; créala antes de registrar el pago.");
+      if (!repartoId) throw new Error("No existe un reparto de fondos para el mes actual; créalo antes de registrar el pago.");
       const category = debtCategory(input.currency);
       const balanceCollection = input.currency === "Bs" ? "transactions" : "dollarTransactions";
       const movementType = input.type === "payable" ? "payment" : "collection";
-      const balanceTransactionRef = doc(collection(db, "distributions", distributionId, balanceCollection));
+      const balanceTransactionRef = doc(collection(db, "distributions", repartoId, balanceCollection));
       const description = input.type === "payable"
         ? `Pago de deuda: ${input.title}`
         : `Cobro recuperado de deuda: ${input.title}`;
@@ -190,7 +190,7 @@ export async function saveDebtAndPayment(
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      newBalanceTransaction = { distributionId, transactionId: balanceTransactionRef.id };
+      newBalanceTransaction = { distributionId: repartoId, transactionId: balanceTransactionRef.id };
     }
     reversalRefs.forEach((reference) => transaction.delete(reference));
 

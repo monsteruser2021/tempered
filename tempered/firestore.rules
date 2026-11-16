@@ -6,6 +6,7 @@ service cloud.firestore {
       return collectionName in [
         'debts',
         'plannedIncomes',
+        'plannedIncomeDrafts',
         'distributions',
         'balances',
         'budgets',
@@ -24,10 +25,10 @@ service cloud.firestore {
       return request.auth != null && data.userId == request.auth.uid;
     }
 
-    function ownsDistribution(distributionId) {
+    function ownsReparto(repartoId) {
       return request.auth != null
-        && exists(/databases/$(database)/documents/distributions/$(distributionId))
-        && get(/databases/$(database)/documents/distributions/$(distributionId)).data.userId == request.auth.uid;
+        && exists(/databases/$(database)/documents/distributions/$(repartoId))
+        && get(/databases/$(database)/documents/distributions/$(repartoId)).data.userId == request.auth.uid;
     }
 
     match /users/{userId} {
@@ -54,7 +55,7 @@ service cloud.firestore {
           'incomes',
           'transactions',
           'dollarTransactions'
-        ] && ownsDistribution(documentId);
+        ] && ownsReparto(documentId);
       }
     }
   }

@@ -4,7 +4,7 @@ import PlannerDashboardAlert from "./planner-dashboard-alert";
 const financialApps = [
   { href: "/summary", label: "Resumen" },
   { href: "/isorropia/metricas", label: "Métricas financieras" },
-  { href: "/distribucion", label: "Distribuciones" },
+  { href: "/reparto-fondos", label: "Reparto de Fondos" },
   { href: "/balance-bs", label: "Balance Bs" },
   { href: "/balance-dolares", label: "Balance $" },
   { href: "/deudas", label: "Deudas pendientes" },

@@ -5,6 +5,7 @@ import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import BackButton from "./back-button";
 import { useSession } from "./session-context";
+import GlobalBalanceSummary from "./global-balance-summary";
 
 const bsCategories = [
   "Gastos básicos", "Fondo de emergencia", "Inversión", "Ahorro",
@@ -17,7 +18,7 @@ const monthNames = [
 ];
 
 type Currency = "bs" | "usd";
-type Distribution = { id: string; month: number; year: number };
+type Reparto = { id: string; month: number; year: number };
 type Transaction = { category: string; income: number; expense: number };
 type Income = { total: number; percentages: Record<string, number> };
 
@@ -25,8 +26,8 @@ export default function Summary() {
   const { userId: currentUserId } = useSession();
   const [currency, setCurrency] = useState<Currency>("bs");
   const [currencyDirection, setCurrencyDirection] = useState<"forward" | "back">("forward");
-  const [distributions, setDistributions] = useState<Distribution[]>([]);
-  const [distributionId, setDistributionId] = useState("");
+  const [repartos, setRepartos] = useState<Reparto[]>([]);
+  const [repartoId, setRepartoId] = useState("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [transactionsKey, setTransactionsKey] = useState("");
@@ -48,21 +49,21 @@ export default function Summary() {
         const next = snapshot.docs
           .map((item) => ({ id: item.id, month: Number(item.data().month), year: Number(item.data().year) }))
           .sort((first, second) => second.year - first.year || second.month - first.month);
-        setDistributions(next);
+        setRepartos(next);
         const now = new Date();
         const currentMonth = next.find((item) => item.year === now.getFullYear() && item.month === now.getMonth());
-        setDistributionId(currentMonth?.id ?? next[0]?.id ?? "");
+        setRepartoId(currentMonth?.id ?? next[0]?.id ?? "");
       },
       () => setErrorMsg("No se pudieron cargar los periodos disponibles."),
     );
   }, [currentUserId]);
 
   useEffect(() => {
-    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !distributionId) return;
-    const dataKey = `${currency}:${distributionId}`;
+    if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !repartoId) return;
+    const dataKey = `${currency}:${repartoId}`;
 
     const stopTransactions = onSnapshot(
-      collection(db, "distributions", distributionId, transactionCollection),
+      collection(db, "distributions", repartoId, transactionCollection),
       (snapshot) => {
         setTransactions(snapshot.docs.map((item) => ({
           category: String(item.data().category ?? ""),
@@ -76,7 +77,7 @@ export default function Summary() {
 
     if (currency !== "bs") return stopTransactions;
     const stopIncomes = onSnapshot(
-      collection(db, "distributions", distributionId, "incomes"),
+      collection(db, "distributions", repartoId, "incomes"),
       (snapshot) => {
         setIncomes(snapshot.docs.map((item) => ({
           total: Number(item.data().totalBs ?? 0),
@@ -84,13 +85,13 @@ export default function Summary() {
         })));
         setIncomesKey(dataKey);
       },
-      () => setErrorMsg("No se pudieron cargar los ingresos distribuidos."),
+      () => setErrorMsg("No se pudieron cargar los ingresos asignados."),
     );
     return () => { stopTransactions(); stopIncomes(); };
-  }, [currentUserId, currency, distributionId, expenseField, incomeField, transactionCollection]);
+  }, [currentUserId, currency, repartoId, expenseField, incomeField, transactionCollection]);
 
   const balances = useMemo(() => categories.map((category) => {
-    const dataKey = `${currency}:${distributionId}`;
+    const dataKey = `${currency}:${repartoId}`;
     const manual = transactionsKey === dataKey ? transactions
       .filter((item) => item.category === category)
       .reduce((sum, item) => sum + item.income - item.expense, 0) : 0;
@@ -98,9 +99,9 @@ export default function Summary() {
       ? incomes.reduce((sum, income) => sum + income.total * Number(income.percentages[category] ?? 0) / 100, 0)
       : 0;
     return { category, balance: initial + manual };
-  }), [categories, currency, distributionId, incomes, incomesKey, transactions, transactionsKey]);
+  }), [categories, currency, repartoId, incomes, incomesKey, transactions, transactionsKey]);
 
-  const selectedDistribution = distributions.find((item) => item.id === distributionId);
+  const selectedReparto = repartos.find((item) => item.id === repartoId);
   const changeCurrency = (next: Currency) => {
     if (next === currency) return;
     setCurrencyDirection(next === "usd" ? "forward" : "back");
@@ -114,18 +115,19 @@ export default function Summary() {
       <section className="w-full max-w-3xl rounded-3xl border border-white/25 bg-white/10 p-5 text-white shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-10">
         <BackButton href="/isorropia">Volver al menú</BackButton>
         <h1 className="font-display mt-8 text-center text-2xl uppercase tracking-[0.08em] text-[#adc0fa] sm:text-4xl">Resumen</h1>
+        {selectedReparto && currentUserId && <GlobalBalanceSummary key={`${currentUserId}-${selectedReparto.id}`} userId={currentUserId} repartoId={selectedReparto.id} />}
         <div className="mx-auto mt-8 flex max-w-xl rounded-xl border border-white/20 bg-black/15 p-1" role="group" aria-label="Moneda">
           <button type="button" onClick={() => changeCurrency("bs")} aria-pressed={currency === "bs"} className={`min-h-11 transform-gpu flex-1 rounded-lg text-xs uppercase transition-[transform,background-color] duration-200 active:scale-95 ${currency === "bs" ? "bg-[#adc0fa] text-[#121212]" : "text-white/70 hover:bg-white/10"}`}>Bolívares (Bs)</button>
           <button type="button" onClick={() => changeCurrency("usd")} aria-pressed={currency === "usd"} className={`min-h-11 transform-gpu flex-1 rounded-lg text-xs uppercase transition-[transform,background-color] duration-200 active:scale-95 ${currency === "usd" ? "bg-[#adc0fa] text-[#121212]" : "text-white/70 hover:bg-white/10"}`}>Dólares ($)</button>
         </div>
         {errorMsg && <p className="mx-auto mt-5 max-w-xl rounded-xl border border-red-500/50 bg-red-500/20 p-3 text-center text-xs text-red-200">{errorMsg}</p>}
-        {!selectedDistribution ? (
-          <p className="mx-auto mt-8 max-w-xl rounded-2xl border border-dashed border-white/25 p-8 text-center text-sm text-white/60">No hay una distribución mensual disponible.</p>
+        {!selectedReparto ? (
+          <p className="mx-auto mt-8 max-w-xl rounded-2xl border border-dashed border-white/25 p-8 text-center text-sm text-white/60">No hay un reparto de fondos mensual disponible.</p>
         ) : (
-          <section key={`${currency}-${distributionId}`} className={`mx-auto mt-8 max-w-xl rounded-2xl border border-white/15 bg-black/15 p-5 sm:p-7 ${currencyDirection === "forward" ? "slide-panel-forward" : "slide-panel-back"}`}>
+          <section key={`${currency}-${repartoId}`} className={`mx-auto mt-8 max-w-xl rounded-2xl border border-white/15 bg-black/15 p-5 sm:p-7 ${currencyDirection === "forward" ? "slide-panel-forward" : "slide-panel-back"}`}>
             <div className="flex flex-col gap-2 border-b border-white/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm uppercase tracking-[0.08em] text-white/90">Saldos disponibles</h2>
-              <p className="text-xs text-white/50">{monthNames[selectedDistribution.month]} {selectedDistribution.year}</p>
+              <p className="text-xs text-white/50">{monthNames[selectedReparto.month]} {selectedReparto.year}</p>
             </div>
             <div className="mt-4 divide-y divide-white/10">
               {balances.map((item) => (

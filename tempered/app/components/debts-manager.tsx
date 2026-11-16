@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { collection, deleteDoc, doc, onSnapshot, query, where } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, query, Timestamp, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
   getBalanceTransactions,
@@ -22,6 +22,18 @@ const paymentCategoryLabel = (currency: Currency) => currency === "Bs" ? "Otros 
 const paymentNotice = (type: DebtType, currency: Currency, amount: number) => type === "receivable"
   ? `Cobro de deuda registrado: ${money(amount, currency)} acreditados a ${paymentCategoryLabel(currency)}.`
   : `Pago de deuda registrado: ${money(amount, currency)} debitados de ${paymentCategoryLabel(currency)}. Si el saldo era insuficiente, el balance reflejará el saldo negativo.`;
+type DebtEntry = Debt & { updatedAt: number };
+const SETTLED_PAGE_SIZE = 3;
+
+function daysUntilDate(date: string, today: string) {
+  const toUtcDay = (value: string) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  const due = toUtcDay(date);
+  const current = toUtcDay(today);
+  return Number.isFinite(due) && Number.isFinite(current) ? Math.round((due - current) / 86_400_000) : null;
+}
 
 function money(value: number, symbol: Currency) {
   return `${symbol} ${value.toFixed(2)}`;
@@ -29,8 +41,10 @@ function money(value: number, symbol: Currency) {
 
 export default function DebtsManager() {
   const { userId } = useSession();
-  const [debts, setDebts] = useState<Debt[]>([]);
+  const [debts, setDebts] = useState<DebtEntry[]>([]);
   const [debtFilter, setDebtFilter] = useState<DebtType>("payable");
+  const [settledType, setSettledType] = useState<DebtType>("payable");
+  const [settledPage, setSettledPage] = useState(1);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DebtType>("receivable");
   const [amount, setAmount] = useState("");
@@ -63,6 +77,7 @@ export default function DebtsManager() {
           paidAmount: getPaidAmount(data, Number(data.amount ?? 0)),
           paid: data.paid === true || getPaidAmount(data, Number(data.amount ?? 0)) >= Number(data.amount ?? 0) - 0.005,
           balanceTransactions: getBalanceTransactions(data),
+          updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : 0,
         };
       })),
       () => setError("No se pudieron cargar las deudas."),
@@ -75,7 +90,10 @@ export default function DebtsManager() {
   }, structuredClone(emptyTotals)), [debts]);
   const filteredDebts = useMemo(() => debts.filter((debt) => debt.type === debtFilter), [debtFilter, debts]);
   const pending = useMemo(() => filteredDebts.filter((debt) => !debt.paid).sort((a, b) => a.dueDate.localeCompare(b.dueDate)), [filteredDebts]);
-  const settled = useMemo(() => filteredDebts.filter((debt) => debt.paid), [filteredDebts]);
+  const settled = useMemo(() => debts.filter((debt) => debt.paid && debt.type === settledType).sort((a, b) => b.updatedAt - a.updatedAt || b.dueDate.localeCompare(a.dueDate)), [debts, settledType]);
+  const settledPageCount = Math.max(1, Math.ceil(settled.length / SETTLED_PAGE_SIZE));
+  const currentSettledPage = Math.min(settledPage, settledPageCount);
+  const pageSettled = settled.slice((currentSettledPage - 1) * SETTLED_PAGE_SIZE, currentSettledPage * SETTLED_PAGE_SIZE);
   const payableCount = debts.filter((debt) => debt.type === "payable").length;
   const receivableCount = debts.filter((debt) => debt.type === "receivable").length;
 
@@ -203,12 +221,16 @@ export default function DebtsManager() {
   };
 
   const renderDebt = (debt: Debt) => {
-    const overdue = !debt.paid && debt.dueDate < today;
+    const daysLeft = daysUntilDate(debt.dueDate, today);
+    const overdue = !debt.paid && daysLeft !== null && daysLeft < 0;
+    const upcoming = !debt.paid && daysLeft !== null && daysLeft >= 0 && daysLeft <= 5;
     const outstanding = Math.max(0, debt.amount - debt.paidAmount);
-    return <article key={debt.id} className={`border p-4 transition-colors sm:p-5 ${overdue ? "border-red-400/80 bg-red-950/50" : "border-[#ddab36]/35 bg-black/35"}`}>
+    const urgencyClass = overdue ? "border-red-400/80 bg-red-950/50" : upcoming ? "border-amber-400/75 bg-amber-950/30" : "border-[#ddab36]/35 bg-black/35";
+    const dueLabel = overdue ? "Vencida" : upcoming ? daysLeft === 0 ? "Vence hoy" : `Vence en ${daysLeft} día${daysLeft === 1 ? "" : "s"}` : "Compromiso";
+    return <article key={debt.id} className={`border p-4 transition-colors sm:p-5 ${urgencyClass}`}>
       <div className="flex min-w-0 items-start gap-3">
         <input type="checkbox" checked={debt.paid} disabled={Boolean(busyId) || saving} onChange={() => void togglePaid(debt)} aria-label={debt.paid ? `Revertir abonos de ${debt.title}` : `Saldar ${debt.title} con el monto pendiente`} className="mt-1 size-5 shrink-0 accent-[#ddab36]" />
-        <div className="min-w-0 flex-1"><h3 className={`wrap-break-word text-sm uppercase ${debt.paid ? "text-white/50 line-through" : "text-white"}`}>{debt.title}</h3><p className="mt-2 wrap-break-word text-xs uppercase text-white/60">{debt.type === "receivable" ? "Me deben" : "Debo"} · {money(debt.amount, debt.currency)}</p><p className="mt-2 wrap-break-word text-xs uppercase text-white/60">Abonado: {money(debt.paidAmount, debt.currency)} · Pendiente: {money(outstanding, debt.currency)}</p><p className={`mt-2 wrap-break-word text-xs uppercase ${overdue ? "font-bold text-red-200" : "text-white/50"}`}>{overdue ? "Vencida · " : "Compromiso · "}{debt.dueDate}{debt.paid ? " · Saldada" : ""}</p></div>
+        <div className="min-w-0 flex-1"><h3 className={`wrap-break-word text-sm uppercase ${debt.paid ? "text-white/50 line-through" : "text-white"}`}>{debt.title}</h3><p className="mt-2 wrap-break-word text-xs uppercase text-white/60">{debt.type === "receivable" ? "Me deben" : "Debo"} · {money(debt.amount, debt.currency)}</p><p className="mt-2 wrap-break-word text-xs uppercase text-white/60">Abonado: {money(debt.paidAmount, debt.currency)} · Pendiente: {money(outstanding, debt.currency)}</p><p className={`mt-2 wrap-break-word text-xs uppercase ${overdue ? "font-bold text-red-200" : upcoming ? "font-bold text-amber-200" : "text-white/50"}`}>{debt.paid ? "Compromiso" : `${dueLabel} · `}{debt.dueDate}{debt.paid ? " · Saldada" : ""}</p></div>
       </div>
       {!debt.paid && <form onSubmit={(event) => { event.preventDefault(); void registerPayment(debt); }} className="mt-4 flex items-end justify-between gap-3"><label className="min-w-0 w-full max-w-48 text-xs uppercase text-white/55">{debt.type === "receivable" ? "Monto cobrado" : "Monto pagado"}<input type="number" min="0.01" max={outstanding.toFixed(2)} step="0.01" value={paymentAmounts[debt.id] ?? ""} onChange={(event) => setPaymentAmounts((current) => ({ ...current, [debt.id]: event.target.value }))} placeholder={outstanding.toFixed(2)} disabled={Boolean(busyId) || saving} className="mt-1 min-h-10 w-full rounded-lg border border-[#ddab36]/25 bg-[#121212] px-3 py-2 text-sm text-white disabled:opacity-50" /></label><button type="submit" disabled={Boolean(busyId) || saving || outstanding <= 0} className="w-fit shrink-0 whitespace-nowrap rounded-lg bg-[#ddab36] px-3 py-2 text-xs font-bold uppercase leading-5 text-[#121212] disabled:opacity-50">{debt.type === "receivable" ? "Registrar cobro" : "Registrar pago"}</button></form>}
       <div className="mt-4 flex flex-wrap justify-end gap-2">{!debt.paid && debt.paidAmount > 0 && <button type="button" onClick={() => void reversePayments(debt)} disabled={Boolean(busyId) || saving} className="min-h-10 rounded-lg border border-amber-300/40 px-3 py-2 text-xs uppercase text-amber-100 hover:bg-amber-900/30 disabled:opacity-50">Revertir abonos</button>}<button type="button" onClick={() => edit(debt)} disabled={Boolean(busyId) || saving} className="min-h-10 rounded-lg border border-[#ddab36]/45 px-3 py-2 text-xs uppercase text-[#ddab36] hover:bg-[#ddab36]/15 disabled:opacity-50">Editar</button><button type="button" onClick={() => void remove(debt)} disabled={Boolean(busyId) || saving} className="min-h-10 rounded-lg border border-red-300/40 px-3 py-2 text-xs uppercase text-red-100 hover:bg-red-900/50 disabled:opacity-50">Eliminar</button></div>
@@ -238,7 +260,18 @@ export default function DebtsManager() {
     </div>
     <section className="mt-8 grid gap-4 sm:grid-cols-2" aria-label="Resumen de deudas"><Kpi title="Total que me deben" totals={totals.receivable} /><Kpi title="Total que debo" totals={totals.payable} /></section>
     <form onSubmit={submit} className="mt-8 border border-[#ddab36]/35 bg-black/55 p-5 sm:p-7"><h2 className="text-lg uppercase text-[#ddab36]">{editingId ? "Editar deuda" : "Nueva deuda"}</h2><div className="mt-5 grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]"><label className="block text-xs uppercase text-white/65">Título / concepto<input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={120} disabled={!userId || saving} placeholder="Ej. Préstamo a Juan" className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-4 py-3 text-sm text-white outline-none focus:border-[#ddab36] disabled:opacity-50" /></label><label className="block text-xs uppercase text-white/65">Tipo<select value={type} onChange={(event) => setType(event.target.value as DebtType)} disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-3 py-3 text-sm text-white outline-none"><option value="receivable">Me deben</option><option value="payable">Debo</option></select></label></div><div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,1fr)_9rem_12rem]"><label className="block text-xs uppercase text-white/65">Monto<input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} required disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-4 py-3 text-sm text-white outline-none focus:border-[#ddab36] disabled:opacity-50" /></label><label className="block text-xs uppercase text-white/65">Moneda<select value={currency} onChange={(event) => setCurrency(event.target.value as Currency)} disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-3 py-3 text-sm text-white outline-none"><option value="Bs">Bolívares - Bs</option><option value="$">Dólares - $</option></select></label><label className="block text-xs uppercase text-white/65">Fecha límite<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required disabled={!userId || saving} className="mt-2 min-h-12 w-full rounded-lg border border-[#ddab36]/30 bg-[#121212] px-4 py-3 text-sm text-white outline-none focus:border-[#ddab36] disabled:opacity-50" /></label></div><label className="mt-4 flex max-w-full items-center gap-3 text-xs uppercase text-white/70"><input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} disabled={!userId || saving} className="size-5 shrink-0 accent-[#ddab36]" /> Pagado / saldado</label><div className="mt-5 flex flex-wrap gap-3"><button type="submit" disabled={!userId || saving} className="min-h-11 rounded-lg bg-[#ddab36] px-5 py-3 text-xs font-bold uppercase text-[#121212] hover:bg-[#f0c55a] disabled:opacity-50">{saving ? "Guardando..." : editingId ? "Guardar cambios" : "Registrar deuda"}</button>{editingId && <button type="button" onClick={resetForm} disabled={saving} className="min-h-11 rounded-lg border border-[#ddab36]/45 px-5 py-3 text-xs uppercase text-[#ddab36]">Cancelar</button>}</div></form>
-    <DebtList title={debtFilter === "payable" ? "Deudas que debo · Pendientes" : "Deudas que me deben · Pendientes"} debts={pending} empty={debtFilter === "payable" ? "No tienes deudas por pagar." : "No tienes deudas por cobrar."} renderDebt={renderDebt} /><DebtList title={debtFilter === "payable" ? "Deudas que debo · Pagadas" : "Deudas que me deben · Saldadas"} debts={settled} empty={debtFilter === "payable" ? "Aún no hay deudas pagadas." : "Aún no hay deudas cobradas."} renderDebt={renderDebt} />
+    <DebtList title={debtFilter === "payable" ? "Deudas que debo · Pendientes" : "Deudas que me deben · Pendientes"} debts={pending} empty={debtFilter === "payable" ? "No tienes deudas por pagar." : "No tienes deudas por cobrar."} renderDebt={renderDebt} />
+    <section className="mt-10" aria-labelledby="settled-debts-title">
+      <div className="flex flex-wrap items-end justify-between gap-3"><h2 id="settled-debts-title" className="text-xl uppercase text-[#ddab36]">Historial de deudas saldadas</h2><span className="text-xs text-white/50">{settled.length} registros</span></div>
+      <div className="mt-4 inline-flex w-full max-w-xl rounded-xl border border-[#ddab36]/30 bg-black/45 p-1" role="tablist" aria-label="Tipo de deuda saldada">
+        {([
+          { value: "payable", label: "Deudas que debía", count: debts.filter((debt) => debt.paid && debt.type === "payable").length },
+          { value: "receivable", label: "Deudas que me debían", count: debts.filter((debt) => debt.paid && debt.type === "receivable").length },
+        ] as const).map((option) => <button key={option.value} type="button" role="tab" aria-selected={settledType === option.value} onClick={() => { setSettledType(option.value); setSettledPage(1); }} className={`flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs uppercase transition-colors sm:text-sm ${settledType === option.value ? "bg-[#ddab36] font-bold text-[#121212]" : "text-white/65 hover:bg-white/10 hover:text-white"}`}><span>{option.label}</span><span className="rounded-full bg-black/15 px-2 py-0.5 text-[10px]">{option.count}</span></button>)}
+      </div>
+      <div className="mt-5 space-y-3">{pageSettled.length ? pageSettled.map(renderDebt) : <p className="border border-dashed border-[#ddab36]/30 p-5 text-sm text-white/55">{settledType === "payable" ? "Aún no hay deudas pagadas." : "Aún no hay deudas cobradas."}</p>}</div>
+      {settled.length > SETTLED_PAGE_SIZE && <nav className="mt-5 flex flex-wrap items-center justify-center gap-3" aria-label="Paginación del historial de deudas saldadas"><button type="button" onClick={() => setSettledPage(Math.max(1, currentSettledPage - 1))} disabled={currentSettledPage <= 1} className="min-h-10 rounded-lg border border-[#ddab36]/40 px-4 py-2 text-xs uppercase text-[#ddab36] disabled:opacity-40">Anterior</button><span className="text-xs text-white/55">Página {currentSettledPage} de {settledPageCount}</span><button type="button" onClick={() => setSettledPage(Math.min(settledPageCount, currentSettledPage + 1))} disabled={currentSettledPage >= settledPageCount} className="min-h-10 rounded-lg border border-[#ddab36]/40 px-4 py-2 text-xs uppercase text-[#ddab36] disabled:opacity-40">Siguiente · Ver más</button></nav>}
+    </section>
   </main>;
 }
 

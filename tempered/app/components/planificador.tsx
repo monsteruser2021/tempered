@@ -433,7 +433,7 @@ export default function Planificador() {
     setNotice("");
     try {
       await executePlannedIncome(userId, income.id);
-      setNotice(`Plan "${income.title}" ejecutado; los pagos y balances se están sincronizando.`);
+      setNotice(`Plan "${income.title}" ejecutado. Los pagos se registraron y el ingreso quedó en borrador para revisión en Reparto de Fondos.`);
     } catch (executionError) {
       setError(executionError instanceof Error ? executionError.message : "No se pudo ejecutar el plan.");
     } finally {
