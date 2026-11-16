@@ -227,12 +227,14 @@ export default function RepartoFondosDetalle({ repartoId, draftId }: Props) {
   const previewTotal = Number.isFinite(amount) && amount > 0 ? amount : 0;
   const percentageProgress = Math.min(100, Math.max(0, percentageTotal));
   const percentageDifference = Number(Math.abs(100 - percentageTotal).toFixed(4)).toString();
+  const balanceAmount = previewTotal * Math.abs(100 - percentageTotal) / 100;
 
   const percentagesAreComplete = Math.abs(percentageTotal - 100) < 0.0001
     && categories.every((category) => {
       const value = percentageInputs[category] ?? "";
       return value === "" || (Number(value) >= 0 && Number(value) <= 100);
     });
+  const isOverallocated = !percentagesAreComplete && percentageTotal > 100;
 
   const resetForm = () => {
     setDescription("");
@@ -365,6 +367,40 @@ export default function RepartoFondosDetalle({ repartoId, draftId }: Props) {
                   ? `Total asignado: ${percentageTotal.toFixed(4)}% · Faltan ${percentageDifference}%`
                   : `Total asignado: ${percentageTotal.toFixed(4)}% · Excede por ${percentageDifference}%`}
             </p>
+            <div
+              className={`mt-4 grid gap-4 rounded-xl border p-4 sm:grid-cols-2 ${
+                percentagesAreComplete
+                  ? "border-emerald-300/40 bg-emerald-950/30"
+                  : isOverallocated
+                    ? "border-red-300/45 bg-red-950/30"
+                    : "border-amber-300/40 bg-amber-950/25"
+              }`}
+              aria-live="polite"
+              aria-label="Saldo de la distribución"
+            >
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.15em] text-white/55">
+                  {isOverallocated ? "Exceso de porcentaje" : "Porcentaje restante"}
+                </p>
+                <p className={`mt-1 text-lg font-semibold ${
+                  percentagesAreComplete ? "text-emerald-200" : isOverallocated ? "text-red-200" : "text-amber-200"
+                }`}>
+                  {percentagesAreComplete
+                    ? "0.00%"
+                    : `${isOverallocated ? "+" : ""}${percentageDifference}%`}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.15em] text-white/55">
+                  {isOverallocated ? "Exceso monetario" : "Saldo restante por repartir"}
+                </p>
+                <p className={`mt-1 text-lg font-semibold ${
+                  percentagesAreComplete ? "text-emerald-200" : isOverallocated ? "text-red-200" : "text-amber-200"
+                }`}>
+                  {formatMoney(percentagesAreComplete ? 0 : balanceAmount, currency)}
+                </p>
+              </div>
+            </div>
             <div
               className="mt-3 h-2 overflow-hidden rounded-full bg-white/10"
               role="progressbar"
