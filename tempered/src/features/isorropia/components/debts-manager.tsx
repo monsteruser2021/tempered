@@ -11,10 +11,10 @@ import {
   type Currency,
   type Debt,
   type DebtType,
-} from "@/lib/debt-payments";
-import { localDateString } from "./task-data";
-import { useSession } from "./session-context";
-import BackButton from "./back-button";
+} from "@/features/isorropia/services/debt-payments";
+import { localDateString } from "@/shared/utils/date";
+import { useSession } from "@/shared/auth/session-context";
+import BackButton from "@/shared/ui/back-button";
 
 type Totals = Record<DebtType, Record<Currency, number>>;
 const emptyTotals: Totals = { receivable: { Bs: 0, "$": 0 }, payable: { Bs: 0, "$": 0 } };

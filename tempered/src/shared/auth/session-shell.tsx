@@ -5,7 +5,7 @@ import { signOut } from "firebase/auth";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { auth } from "@/lib/firebase";
-import { SessionProvider, useSession } from "./session-context";
+import { SessionProvider, useSession } from "@/shared/auth/session-context";
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const activityEvents = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];

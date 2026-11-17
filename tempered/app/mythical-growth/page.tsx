@@ -1,4 +1,4 @@
-import MythicalGrowthManager from "../components/mythical-growth-inventory";
+import MythicalGrowthManager from "@/features/mythical-growth/components/mythical-growth-inventory";
 
 export default function MythicalGrowthPage() {
   return <MythicalGrowthManager />;

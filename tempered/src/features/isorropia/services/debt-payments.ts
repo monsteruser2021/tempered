@@ -9,7 +9,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { localDateString } from "@/app/components/task-data";
+import { localDateString } from "@/shared/utils/date";
 
 export type DebtType = "receivable" | "payable";
 export type Currency = "Bs" | "$";

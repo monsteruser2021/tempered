@@ -5,10 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { CircleAlert } from "lucide-react";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { getDueDateUrgency, localDateString, type Task } from "./task-data";
-import { readSessionUserId } from "./grobit-data";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { getDueDateUrgency, localDateString, type Task } from "../services/task-data";
+import { readSessionUserId } from "@/shared/auth/session-user-id";
+import { useSession } from "@/shared/auth/session-context";
 
 export default function TaskManager() {
   const [tasks, setTasks] = useState<Task[]>([]);

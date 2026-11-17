@@ -1,4 +1,4 @@
-import RepartoFondosDetalle from "../../components/reparto-fondos-detalle";
+import RepartoFondosDetalle from "@/features/isorropia/components/reparto-fondos-detalle";
 
 type Props = {
   params: Promise<{ id: string }>;

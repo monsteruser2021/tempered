@@ -6,7 +6,7 @@ import {
   formatPlannerAlertMoney,
   plannerAlertPresentation,
   type NextIncomeAssessment,
-} from "@/lib/planner-health";
+} from "@/features/isorropia/services/planner-health";
 
 export default function PlannerHealthBanner({
   assessment,

@@ -6,7 +6,7 @@ import {
   PLANNER_ALERT_THRESHOLDS_EVENT,
   plannerAlertStorageKey,
   readPlannerAlertThresholds,
-} from "@/lib/planner-health";
+} from "@/features/isorropia/services/planner-health";
 
 const getServerSnapshot = () => null;
 

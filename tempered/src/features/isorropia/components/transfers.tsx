@@ -1,6 +1,6 @@
 "use client";
 
-import BackButton from "./back-button";
+import BackButton from "@/shared/ui/back-button";
 import { useEffect, useMemo, useState } from "react";
 import {
   collection,
@@ -12,7 +12,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useSession } from "./session-context";
+import { useSession } from "@/shared/auth/session-context";
 
 const bsCategories = [
   "Gastos básicos", "Fondo de emergencia", "Inversión", "Ahorro",

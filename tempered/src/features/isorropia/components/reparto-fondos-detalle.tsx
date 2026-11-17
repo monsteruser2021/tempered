@@ -13,10 +13,10 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { approvePlannedIncomeDraft, PLANNER_CATEGORIES } from "@/lib/planner";
-import type { Currency } from "@/lib/debt-payments";
-import BackButton from "./back-button";
-import { useSession } from "./session-context";
+import { approvePlannedIncomeDraft, PLANNER_CATEGORIES } from "@/features/isorropia/services/planner";
+import type { Currency } from "@/features/isorropia/services/debt-payments";
+import BackButton from "@/shared/ui/back-button";
+import { useSession } from "@/shared/auth/session-context";
 
 type Percentages = Record<string, number>;
 type PercentageInputs = Record<string, string>;

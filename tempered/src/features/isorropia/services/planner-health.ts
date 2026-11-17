@@ -1,5 +1,5 @@
-import { getOutstandingDebt, type Currency, type Debt } from "@/lib/debt-payments";
-import type { PlannedAssignment, PlannedIncome } from "@/lib/planner";
+import { getOutstandingDebt, type Currency, type Debt } from "@/features/isorropia/services/debt-payments";
+import type { PlannedAssignment, PlannedIncome } from "@/features/isorropia/services/planner";
 
 export type PlannerAlertThresholds = {
   caution: number;

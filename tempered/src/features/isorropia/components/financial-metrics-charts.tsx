@@ -128,7 +128,7 @@ function CategoryDonut({
                   </linearGradient>
                 ))}
               </defs>
-              <Pie data={amounts} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="52%" outerRadius="82%" paddingAngle={3} stroke="#17130b" strokeWidth={2} isAnimationActive={false}>
+              <Pie data={amounts} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="52%" outerRadius="82%" paddingAngle={3} stroke="#211a0d" strokeWidth={1} isAnimationActive={false}>
                 {amounts.map((item) => <Cell key={item.name} fill={`url(#${gradientPrefix}-${item.colorIndex % chartColors.length})`} />)}
               </Pie>
               <Tooltip

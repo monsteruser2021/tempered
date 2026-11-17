@@ -7,16 +7,16 @@ import {
   getBalanceTransactions,
   getPaidAmount,
   type Debt,
-} from "@/lib/debt-payments";
+} from "@/features/isorropia/services/debt-payments";
 import {
   readPlannedAssignments,
   type PlannedIncome,
-} from "@/lib/planner";
+} from "@/features/isorropia/services/planner";
 import {
   assessNextPlannedIncome,
-} from "@/lib/planner-health";
-import { useSession } from "./session-context";
-import { localDateString } from "./task-data";
+} from "@/features/isorropia/services/planner-health";
+import { useSession } from "@/shared/auth/session-context";
+import { localDateString } from "@/shared/utils/date";
 import PlannerHealthBanner from "./planner-health-banner";
 import { usePlannerAlertThresholds } from "./use-planner-alert-thresholds";
 

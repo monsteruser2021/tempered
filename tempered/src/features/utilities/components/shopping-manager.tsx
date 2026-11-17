@@ -5,9 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { CircleAlert } from "lucide-react";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { getDueDateUrgency, localDateString } from "./task-data";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { getDueDateUrgency, localDateString } from "../services/task-data";
+import { useSession } from "@/shared/auth/session-context";
 
 type ShoppingItem = { id: string; userId: string; title: string; price: number; currency: "Bs" | "$"; dueDate: string; completed: boolean };
 

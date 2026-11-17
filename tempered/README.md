@@ -20,6 +20,42 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Arquitectura por producto
+
+Las rutas de `app/` se mantienen como adaptadores del App Router. La implementación de cada producto vive en su propio módulo bajo `src/features/`:
+
+```text
+src/
+  features/
+    isorropia/
+      components/
+      services/
+      types/          # Tipos dedicados cuando se separen de los servicios
+    grobit/
+      components/
+      services/
+      types/
+    mawina/
+      components/
+      services/
+      types/
+    mythical-growth/
+      components/
+      services/
+      types/
+    utilities/
+      components/
+      services/
+      types/
+  shared/
+    auth/             # Sesión y autenticación compartidas
+    navigation/       # Navegación entre productos
+    ui/               # Componentes visuales genéricos
+    utils/            # Utilidades sin dominio de producto
+```
+
+Cada feature puede importar su propio código y la infraestructura compartida (`@/lib/firebase` y `@/shared/*`), pero no debe importar de `@/features/<otro-producto>`. La navegación global conecta los módulos; las páginas de `app/` importan las pantallas del módulo correspondiente. Los tipos y servicios propios permanecen dentro de la carpeta de su feature.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

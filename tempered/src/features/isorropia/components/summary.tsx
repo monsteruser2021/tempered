@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { useSession } from "@/shared/auth/session-context";
 import GlobalBalanceSummary from "./global-balance-summary";
 
 const bsCategories = [

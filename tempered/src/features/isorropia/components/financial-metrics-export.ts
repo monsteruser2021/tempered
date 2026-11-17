@@ -42,7 +42,7 @@ function applyTableBorders(worksheet: ExcelJS.Worksheet, firstRow: number, lastR
 }
 
 function styleHeader(row: ExcelJS.Row) {
-  row.height = 24;
+  row.height = 28;
   row.eachCell((cell) => {
     cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${navy}` } };
@@ -58,8 +58,8 @@ export async function exportFinancialMetrics(options: ExportOptions) {
 
   const summary = workbook.addWorksheet("Resumen y Estrategia", { views: [{ state: "frozen", ySplit: 3 }] });
   summary.columns = [
-    { width: 34 }, { width: 18 }, { width: 18 }, { width: 4 },
-    { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 },
+    { width: 34 }, { width: 20 }, { width: 20 }, { width: 20 },
+    { width: 20 }, { width: 4 }, { width: 20 }, { width: 20 }, { width: 20 },
   ];
   summary.mergeCells("A1:C1");
   summary.getCell("A1").value = "ISORROPIA KAIROS · RESUMEN FINANCIERO";
@@ -117,10 +117,14 @@ export async function exportFinancialMetrics(options: ExportOptions) {
   });
   applyTableBorders(summary, debtsHeaderRow, debtsHeaderRow + debts.length, 1, 4);
 
-  options.charts.forEach((chart, index) => {
+  let chartRow = 3;
+  options.charts.forEach((chart) => {
     const imageId = workbook.addImage({ base64: chart.base64, extension: "png" });
-    const row = 4 + index * 19;
-    summary.addImage(imageId, { tl: { col: 4, row }, ext: { width: 540, height: 300 } });
+    const scale = Math.min(1, 620 / chart.width, 320 / chart.height);
+    const width = chart.width * scale;
+    const height = chart.height * scale;
+    summary.addImage(imageId, { tl: { col: 6, row: chartRow }, ext: { width, height } });
+    chartRow += height / 15 + 2;
   });
   summary.getColumn(1).alignment = { vertical: "middle" };
   summary.getColumn(2).alignment = { vertical: "middle", horizontal: "right" };

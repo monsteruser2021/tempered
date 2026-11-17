@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { addDoc, collection, deleteDoc, doc, onSnapshot, query, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { type Habit, weekDays } from "./grobit-data";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { type Habit, weekDays } from "../services/grobit-data";
+import { useSession } from "@/shared/auth/session-context";
 
 const allDays = weekDays.map((day) => day.value);
 

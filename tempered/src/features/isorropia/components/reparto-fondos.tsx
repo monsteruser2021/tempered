@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import BackButton from "./back-button";
+import BackButton from "@/shared/ui/back-button";
 import {
   collection,
   deleteDoc,
@@ -18,7 +18,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useSession } from "./session-context";
+import { useSession } from "@/shared/auth/session-context";
 
 const categories = [
   "Gastos básicos", "Fondo de emergencia", "Inversión", "Ahorro",

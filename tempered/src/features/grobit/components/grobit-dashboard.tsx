@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { collection, doc, onSnapshot, query, setDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { dayOfWeek, displayDate, formatDate, getMonthDates, type Habit } from "./grobit-data";
-import { useSession } from "./session-context";
+import { dayOfWeek, displayDate, formatDate, getMonthDates, type Habit } from "../services/grobit-data";
+import { useSession } from "@/shared/auth/session-context";
 
 type Completion = { habitId: string; date: string; completed: boolean };
 

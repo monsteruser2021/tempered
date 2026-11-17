@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, ChartNoAxesCombined, Coins, Download, Scale, TrendingUp, Wallet } from "lucide-react";
 import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { useSession } from "@/shared/auth/session-context";
 import FinancialMetricsCharts, {
   type ActiveDebtPoint,
   type ExpenseCategoryPoint,

@@ -13,8 +13,8 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { useSession } from "@/shared/auth/session-context";
 import BalanceTransactionFilters, {
   sortAndFilterMovements,
   type MovementSort,

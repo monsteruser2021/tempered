@@ -6,7 +6,7 @@ import {
   PLANNER_ALERT_THRESHOLDS_EVENT,
   plannerAlertStorageKey,
   type PlannerAlertThresholds,
-} from "@/lib/planner-health";
+} from "@/features/isorropia/services/planner-health";
 
 export default function PlannerAlertSettings({
   userId,

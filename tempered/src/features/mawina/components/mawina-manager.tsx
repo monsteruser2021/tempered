@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import BackButton from "./back-button";
-import { readSessionUserId } from "./grobit-data";
-import { isRoutineScheduledToday, mawinaDateString, mawinaWeekDays, type MawinaRoutine } from "./mawina-data";
-import { useSession } from "./session-context";
+import BackButton from "@/shared/ui/back-button";
+import { readSessionUserId } from "@/shared/auth/session-user-id";
+import { isRoutineScheduledToday, mawinaDateString, mawinaWeekDays, type MawinaRoutine } from "../services/mawina-data";
+import { useSession } from "@/shared/auth/session-context";
 
 const emptyDays = [1, 2, 3, 4, 5];
 

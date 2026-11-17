@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useSession } from "./session-context";
-import BackButton from "./back-button";
+import { useSession } from "@/shared/auth/session-context";
+import BackButton from "@/shared/ui/back-button";
 
 type Currency = "Bs" | "$";
 type Condition = "Nuevo" | "Usado";

@@ -17,10 +17,10 @@ import {
   debtCategory,
   type Currency,
   type Debt,
-} from "@/lib/debt-payments";
+} from "@/features/isorropia/services/debt-payments";
 import {
   localDateString,
-} from "@/app/components/task-data";
+} from "@/shared/utils/date";
 
 export const PLANNER_CATEGORIES: Record<Currency, readonly string[]> = {
   Bs: [
