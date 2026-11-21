@@ -20,12 +20,6 @@ const applications = [
     className: "border-[#3b0764]/80 bg-linear-to-br from-[#3b0764] via-[#3b0764]/45 to-[#121212] hover:from-[#4a0e4e] hover:via-[#3b0764]/60",
   },
   {
-    href: "/mawina",
-    name: "Mawina Kairos",
-    description: "Bloques de tiempo y ejecución",
-    className: "border-[#620404]/70 bg-linear-to-br from-[#620404]/80 via-[#620404]/25 to-[#121212] hover:from-[#620404] hover:via-[#620404]/35",
-  },
-  {
     href: "/utilidades",
     name: "Utilidades",
     description: "Utilidades de Tempered",

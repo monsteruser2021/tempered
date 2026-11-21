@@ -9,6 +9,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
+  Timestamp,
   updateDoc,
   where,
 } from "firebase/firestore";
@@ -20,21 +21,24 @@ import BalanceTransactionFilters, {
   type MovementSort,
   type MovementType,
 } from "./balance-transaction-filters";
+import RecentBalanceMovements from "./recent-balance-movements";
 
 const categories = [
   "Gastos básicos", "Fondo de emergencia", "Inversión", "Ahorro",
   "Transporte", "Caridad", "Lujo/gustos", "Otros gastos",
 ];
+const recentTab = "Recientes (5)";
 const monthNames = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
 type Reparto = { id: string; month: number; year: number };
-type Transaction = { id: string; category: string; date: string; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isDebtMovement: boolean };
-type Income = { id: string; description: string; totalBs: number; percentages: Record<string, number>; date: string };
+type Transaction = { id: string; category: string; date: string; createdAt: number; description: string; incomeBs: number; expenseBs: number; isTransfer: boolean; isDebtMovement: boolean };
+type Income = { id: string; description: string; totalBs: number; percentages: Record<string, number>; date: string; createdAt: number };
 
 const isTransferRecord = (data: Record<string, unknown>) => data.isTransfer === true || Boolean(data.transferId) || /^(Transf\. a|Prov\. de)/i.test(String(data.description ?? ""));
+const timestampMillis = (value: unknown) => value instanceof Timestamp ? value.toMillis() : 0;
 
 export default function BalanceBs() {
   const { userId: currentUserId } = useSession();
@@ -42,7 +46,7 @@ export default function BalanceBs() {
   const [selectedId, setSelectedId] = useState("");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [incomes, setIncomes] = useState<Income[]>([]);
-  const [activeCategory, setActiveCategory] = useState(categories[0]);
+  const [activeCategory, setActiveCategory] = useState(recentTab);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [movementSort, setMovementSort] = useState<MovementSort>("date-desc");
@@ -67,8 +71,8 @@ export default function BalanceBs() {
 
   useEffect(() => {
     if (typeof currentUserId !== "string" || currentUserId.trim() === "" || !selectedId) return;
-    const stopIncomes = onSnapshot(collection(db, "distributions", selectedId, "incomes"), (snapshot) => setIncomes(snapshot.docs.map((item) => ({ id: item.id, description: String(item.data().description ?? ""), totalBs: Number(item.data().totalBs ?? 0), percentages: (item.data().percentages ?? {}) as Record<string, number>, date: String(item.data().date ?? "") }))), () => setErrorMsg("No se pudieron cargar los ingresos asignados."));
-    const stopTransactions = onSnapshot(collection(db, "distributions", selectedId, "transactions"), (snapshot) => setTransactions(snapshot.docs.map((item) => ({ id: item.id, category: String(item.data().category ?? ""), date: String(item.data().date ?? ""), description: String(item.data().description ?? ""), incomeBs: Number(item.data().incomeBs ?? 0), expenseBs: Number(item.data().expenseBs ?? 0), isTransfer: isTransferRecord(item.data()), isDebtMovement: item.data().isDebtPayment === true || item.data().isDebtCollection === true || item.data().debtMovementType === "payment" || item.data().debtMovementType === "collection" }))), () => setErrorMsg("No se pudieron cargar las transacciones."));
+    const stopIncomes = onSnapshot(collection(db, "distributions", selectedId, "incomes"), (snapshot) => setIncomes(snapshot.docs.map((item) => ({ id: item.id, description: String(item.data().description ?? ""), totalBs: Number(item.data().totalBs ?? 0), percentages: (item.data().percentages ?? {}) as Record<string, number>, date: String(item.data().date ?? ""), createdAt: timestampMillis(item.data().createdAt) }))), () => setErrorMsg("No se pudieron cargar los ingresos asignados."));
+    const stopTransactions = onSnapshot(collection(db, "distributions", selectedId, "transactions"), (snapshot) => setTransactions(snapshot.docs.map((item) => ({ id: item.id, category: String(item.data().category ?? ""), date: String(item.data().date ?? ""), createdAt: timestampMillis(item.data().createdAt), description: String(item.data().description ?? ""), incomeBs: Number(item.data().incomeBs ?? 0), expenseBs: Number(item.data().expenseBs ?? 0), isTransfer: isTransferRecord(item.data()), isDebtMovement: item.data().isDebtPayment === true || item.data().isDebtCollection === true || item.data().debtMovementType === "payment" || item.data().debtMovementType === "collection" }))), () => setErrorMsg("No se pudieron cargar las transacciones."));
     return () => { stopIncomes(); stopTransactions(); };
   }, [currentUserId, selectedId]);
 
@@ -76,18 +80,29 @@ export default function BalanceBs() {
   const monthStart = selectedReparto ? `${selectedReparto.year}-${String(selectedReparto.month + 1).padStart(2, "0")}-01` : "";
   const monthEnd = selectedReparto ? new Date(selectedReparto.year, selectedReparto.month + 1, 0).getDate() : 0;
   const maxDate = selectedReparto ? `${selectedReparto.year}-${String(selectedReparto.month + 1).padStart(2, "0")}-${String(monthEnd).padStart(2, "0")}` : "";
-  const initialTransactions = useMemo<Transaction[]>(() => incomes.flatMap((income) => {
-    const percentage = Number(income.percentages[activeCategory] ?? 0);
+  const initialTransactions = useMemo<Transaction[]>(() => incomes.flatMap((income) => categories.flatMap((category) => {
+    const percentage = Number(income.percentages[category] ?? 0);
     const amount = income.totalBs * percentage / 100;
-    return amount > 0 ? [{ id: `initial-${income.id}`, category: activeCategory, date: income.date || monthStart, description: `${income.description} (${percentage}%)`, incomeBs: amount, expenseBs: 0, isTransfer: false, isDebtMovement: false }] : [];
-  }), [activeCategory, incomes, monthStart]);
-  const categoryTransactions = [...initialTransactions, ...transactions.filter((item) => item.category === activeCategory)];
+    return amount > 0 ? [{ id: `initial-${income.id}`, category, date: income.date || monthStart, createdAt: income.createdAt, description: `${income.description} (${percentage}%)`, incomeBs: amount, expenseBs: 0, isTransfer: false, isDebtMovement: false }] : [];
+  })), [incomes, monthStart]);
+  const categoryTransactions = activeCategory === recentTab
+    ? []
+    : [...initialTransactions.filter((item) => item.category === activeCategory), ...transactions.filter((item) => item.category === activeCategory)];
   const visibleTransactions = sortAndFilterMovements(categoryTransactions.map((item) => ({
     ...item,
     income: item.incomeBs,
     expense: item.expenseBs,
   })), movementSort, movementType);
   const remaining = categoryTransactions.reduce((sum, item) => sum + item.incomeBs - item.expenseBs, 0);
+  const recentTransactions = [...initialTransactions, ...transactions].map((item) => ({
+    id: item.id,
+    category: item.category,
+    date: item.date,
+    createdAt: item.createdAt,
+    description: item.description,
+    income: item.incomeBs,
+    expense: item.expenseBs,
+  }));
 
   const resetForm = () => { setEditingId(null); setDate(""); setDescription(""); setIncomeBs(""); setExpenseBs(""); };
   const saveTransaction = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -130,14 +145,20 @@ export default function BalanceBs() {
     <main className="flex min-h-screen items-center justify-center px-5 py-10">
       <section className="w-[90vw] max-w-7xl rounded-3xl border border-white/25 bg-white/10 p-6 text-white shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-10">
         <BackButton href="/isorropia">Volver al menú</BackButton>
-        <h1 className="font-display mt-8 text-center text-2xl uppercase tracking-[0.1em] text-[#adc0fa] sm:text-4xl">Balance Bs</h1>
+        <h1 className="font-display mt-8 text-center text-2xl uppercase tracking-[0.1em] text-red-300 sm:text-4xl">Balance Bs</h1>
         {errorMsg && <p className="mx-auto mt-5 max-w-5xl rounded-xl border border-red-500/50 bg-red-500/20 p-3 text-center text-sm text-red-200">{errorMsg}</p>}
         <div className="mx-auto mt-8 max-w-5xl"><label className="text-xs uppercase text-white/70">Reparto de Fondos seleccionado<select value={selectedId} onChange={(event) => { setSelectedId(event.target.value); resetForm(); }} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-4 py-3 text-white">{repartos.length === 0 ? <option value="">No hay repartos de fondos creados</option> : repartos.map((item) => <option key={item.id} value={item.id}>{monthNames[item.month]} {item.year}</option>)}</select></label></div>
         {!selectedReparto ? <p className="mx-auto mt-8 max-w-5xl rounded-2xl border border-dashed border-white/25 p-8 text-center text-sm text-white/60">Crea primero un reparto de fondos mensual.</p> : <>
-          <div className="mt-8 flex gap-2 overflow-x-auto pb-3" role="tablist">{categories.map((category) => <button key={category} type="button" onClick={() => { setActiveCategory(category); resetForm(); }} className={`shrink-0 rounded-xl border px-4 py-3 text-xs uppercase transition ${activeCategory === category ? "border-[#adc0fa] bg-[#adc0fa] text-[#121212]" : "border-white/20 bg-black/15 text-white/70 hover:bg-white/15"}`}>{category}{activeCategory === category && <span className="ml-2">{remaining.toFixed(2)} Bs</span>}</button>)}</div>
+          <div className="mt-8 flex gap-2 overflow-x-auto pb-3" role="tablist" aria-label="Categorías del balance en bolívares">{[recentTab, ...categories].map((category) => <button key={category} type="button" role="tab" aria-selected={activeCategory === category} onClick={() => { setActiveCategory(category); resetForm(); }} className={`shrink-0 rounded-xl border px-4 py-3 text-xs uppercase transition ${activeCategory === category ? "border-red-500 bg-red-600 text-white" : "border-white/20 bg-black/15 text-white/70 hover:bg-white/15"}`}>{category}{category !== recentTab && activeCategory === category && <span className="ml-2">{remaining.toFixed(2)} Bs</span>}</button>)}</div>
+          {activeCategory === recentTab ? (
+            <>
+              <h2 className="mt-4 text-lg uppercase text-white">Últimos movimientos</h2>
+              <RecentBalanceMovements movements={recentTransactions} currency="Bs" onSelectCategory={(category) => { setActiveCategory(category); resetForm(); }} />
+            </>
+          ) : <>
           <div className="mt-4 flex items-center justify-between"><h2 className="text-lg uppercase text-white">{activeCategory}</h2><span className={remaining >= 0 ? "text-emerald-300" : "text-red-300"}>Total restante: {remaining.toFixed(2)} Bs</span></div>
           <BalanceTransactionFilters sort={movementSort} type={movementType} onSortChange={setMovementSort} onTypeChange={setMovementType} />
-          <form onSubmit={saveTransaction} className="mt-5 grid gap-3 rounded-2xl border border-white/15 bg-black/15 p-5 sm:grid-cols-[150px_1fr_150px_150px_auto] sm:items-end"><label className="text-xs uppercase text-white/70">Fecha<input required type="date" min={monthStart} max={maxDate} value={date} onChange={(event) => setDate(event.target.value)} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><label className="text-xs uppercase text-white/70">Descripción<input required value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej. Supermercado" className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><label className="text-xs uppercase text-white/70">Ingreso Bs<input type="number" min="0" step="0.01" value={incomeBs} onChange={(event) => setIncomeBs(event.target.value)} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><label className="text-xs uppercase text-white/70">Egreso Bs<input type="number" min="0" step="0.01" value={expenseBs} onChange={(event) => setExpenseBs(event.target.value)} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><button type="submit" className="rounded-xl bg-[#adc0fa] px-4 py-3 text-xs uppercase text-[#121212] hover:bg-white">{editingId ? "Guardar" : "Agregar"}</button></form>
+          <form onSubmit={saveTransaction} className="mt-5 grid gap-3 rounded-2xl border border-white/15 bg-black/15 p-5 sm:grid-cols-[150px_1fr_150px_150px_auto] sm:items-end"><label className="text-xs uppercase text-white/70">Fecha<input required type="date" min={monthStart} max={maxDate} value={date} onChange={(event) => setDate(event.target.value)} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><label className="text-xs uppercase text-white/70">Descripción<input required value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej. Supermercado" className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><label className="text-xs uppercase text-white/70">Ingreso Bs<input type="number" min="0" step="0.01" value={incomeBs} onChange={(event) => setIncomeBs(event.target.value)} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><label className="text-xs uppercase text-white/70">Egreso Bs<input type="number" min="0" step="0.01" value={expenseBs} onChange={(event) => setExpenseBs(event.target.value)} className="mt-2 w-full rounded-xl border border-white/25 bg-[#121212]/80 px-3 py-3 text-white" /></label><button type="submit" className="rounded-xl bg-red-600 px-4 py-3 text-xs uppercase text-white hover:bg-red-500">{editingId ? "Guardar" : "Agregar"}</button></form>
           <div className="mt-6 space-y-3 md:hidden">
             {visibleTransactions.length === 0 ? <p className="rounded-2xl border border-dashed border-white/25 p-8 text-center text-sm text-white/55">No hay movimientos que coincidan con los filtros.</p> : visibleTransactions.map((item) => (
               <article key={item.id} className="rounded-2xl border border-white/15 bg-black/15 p-4">
@@ -179,6 +200,7 @@ export default function BalanceBs() {
               <tbody>{visibleTransactions.length === 0 ? <tr><td colSpan={6} className="p-8 text-center text-sm text-white/55">No hay movimientos que coincidan con los filtros.</td></tr> : visibleTransactions.map((item) => <tr key={item.id} className="border-b border-white/10"><td className="p-4">{item.date || "Inicial"}</td><td className="p-4">{item.description}</td><td className="p-4 text-emerald-300">{item.incomeBs.toFixed(2)} Bs</td><td className="p-4 text-red-300">{item.expenseBs.toFixed(2)} Bs</td><td className={item.incomeBs - item.expenseBs >= 0 ? "p-4 text-emerald-300" : "p-4 text-red-300"}>{(item.incomeBs - item.expenseBs).toFixed(2)} Bs</td><td className="p-4">{item.id.startsWith("initial-") ? <span className="text-xs text-white/40">Ingreso inicial</span> : item.isDebtMovement ? <span className="text-xs text-white/40">Movimiento de deuda vinculado</span> : item.isTransfer ? <span className="text-xs text-white/40">Transferencia protegida</span> : <span className="flex gap-2"><button type="button" onClick={() => editTransaction(item)} className="rounded-lg border border-white/25 px-3 py-2 text-xs uppercase">Editar</button>{pendingDeleteId === item.id ? <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg bg-red-500/80 px-3 py-2 text-xs uppercase">Confirmar</button> : <button type="button" onClick={() => deleteTransaction(item.id)} className="rounded-lg border border-red-300/30 px-3 py-2 text-xs uppercase text-red-200">Eliminar</button>}</span>}</td></tr>)}</tbody>
             </table>
           </div>
+          </>}
         </>}
       </section>
     </main>

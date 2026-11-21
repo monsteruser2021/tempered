@@ -84,18 +84,18 @@ export default function DebtsManager() {
     );
   }, [userId]);
 
-  const totals = useMemo(() => debts.reduce<Totals>((result, debt) => {
-    if (!debt.paid) result[debt.type][debt.currency] += Math.max(0, debt.amount - debt.paidAmount);
+  const activeDebts = useMemo(() => debts.filter((debt) => !debt.paid), [debts]);
+  const totals = useMemo(() => activeDebts.reduce<Totals>((result, debt) => {
+    result[debt.type][debt.currency] += Math.max(0, debt.amount - debt.paidAmount);
     return result;
-  }, structuredClone(emptyTotals)), [debts]);
-  const filteredDebts = useMemo(() => debts.filter((debt) => debt.type === debtFilter), [debtFilter, debts]);
-  const pending = useMemo(() => filteredDebts.filter((debt) => !debt.paid).sort((a, b) => a.dueDate.localeCompare(b.dueDate)), [filteredDebts]);
+  }, structuredClone(emptyTotals)), [activeDebts]);
+  const pending = useMemo(() => activeDebts.filter((debt) => debt.type === debtFilter).sort((a, b) => a.dueDate.localeCompare(b.dueDate)), [activeDebts, debtFilter]);
   const settled = useMemo(() => debts.filter((debt) => debt.paid && debt.type === settledType).sort((a, b) => b.updatedAt - a.updatedAt || b.dueDate.localeCompare(a.dueDate)), [debts, settledType]);
   const settledPageCount = Math.max(1, Math.ceil(settled.length / SETTLED_PAGE_SIZE));
   const currentSettledPage = Math.min(settledPage, settledPageCount);
   const pageSettled = settled.slice((currentSettledPage - 1) * SETTLED_PAGE_SIZE, currentSettledPage * SETTLED_PAGE_SIZE);
-  const payableCount = debts.filter((debt) => debt.type === "payable").length;
-  const receivableCount = debts.filter((debt) => debt.type === "receivable").length;
+  const payableCount = activeDebts.filter((debt) => debt.type === "payable").length;
+  const receivableCount = activeDebts.filter((debt) => debt.type === "receivable").length;
 
   const resetForm = () => {
     setTitle(""); setType("receivable"); setAmount(""); setCurrency("Bs");

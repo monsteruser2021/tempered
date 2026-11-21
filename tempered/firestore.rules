@@ -13,6 +13,7 @@ service cloud.firestore {
         'habitCompletions',
         'habits',
         'mawinaRoutines',
+        'mawinaWorkoutSessions',
         'mythicalInvestments',
         'mythicalSales',
         'isorropia',
